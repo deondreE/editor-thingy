@@ -81,11 +81,11 @@ renderer_init :: proc(
 	return r, true
 }
 
-renderer_render :: proc(r: ^Renderer) {
+renderer_render :: proc(r: ^Renderer, views: []View) {
 	if r == nil do return
 	switch d in r.backend_data {
 		case ^Vulkan_Context:
-			vk_ctx_render(d)
+			vk_ctx_render(d, views)
 	}
 }
 

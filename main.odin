@@ -44,17 +44,32 @@ main :: proc() {
 	}
 	defer engine.renderer_shutdown(renderer)
 
+	layout: engine.Layout_State
+	engine.layout_init(&layout, WINDOW_WIDTH, WINDOW_HEIGHT)
+	defer engine.layout_destroy(&layout)
+
 	main_loop: for {
 		for e: sdl.Event; sdl.PollEvent(&e); {
 			#partial switch e.type {
 			case .QUIT, .WINDOW_CLOSE_REQUESTED:
 				break main_loop
 			case .KEY_UP:
-				if e.key.key == sdl.K_ESCAPE do break main_loop
+				switch e.key.key {
+				case sdl.K_ESCAPE:
+					break main_loop
+				case sdl.K_S:
+					engine.layout_toggle_split(&layout)
+				}
+			case .WINDOW_RESIZED:
+				engine.layout_resize(
+					&layout,
+					f32(e.window.data1),
+					f32(e.window.data2),
+				)
 			}
 		}
 
-		engine.renderer_render(renderer)
+		engine.renderer_render(renderer, layout.views[:])
 	}
 
 }

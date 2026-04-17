@@ -207,13 +207,17 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 }
 
 // Takes specification on what to render, and where to render it.
-vk_ctx_render :: proc(ctx: ^Vulkan_Context) {
+vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	vk.WaitForFences(ctx.logical_device, 1, &ctx.in_flight, true, max(u64))
 	vk.ResetFences  (ctx.logical_device, 1, &ctx.in_flight)
 
 	img_idx: u32
-	vk.AcquireNextImageKHR(ctx.logical_device, ctx.swap_chain, max(u64),
+	result := vk.AcquireNextImageKHR(ctx.logical_device, ctx.swap_chain, max(u64),
 	                       ctx.img_available, 0, &img_idx)
+	if result == .ERROR_OUT_OF_DATE_KHR {
+		// @Todo: Handle Swapchain rebuild on resize
+		return
+	}
 
 	cb := ctx.cmd_buffers[img_idx]
 	vk.ResetCommandBuffer(cb, {})
@@ -235,6 +239,32 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context) {
 	//
 	// ── draw calls go here (UI pass, text pass, etc.) ──
 	//
+
+	for view in views {
+		// Viewport: maps NDC [-1, 1] into this region of the framebuffer
+		viewport := vk.Viewport {
+			x = view.rect.x,
+			y = view.rect.y,
+			width = view.rect.w,
+			height = view.rect.h,
+			minDepth = 0.0,
+			maxDepth = 1.0,
+		}
+		vk.CmdSetViewport(cb, 0, 1, &viewport)
+
+		scissor := vk.Rect2D {
+			offset = {i32(view.rect.x), i32(view.rect.y)},
+			extent = {u32(view.rect.w), u32(view.rect.h)},
+		}
+		vk.CmdSetScissor(cb, 0, 1, &scissor)
+
+		switch view.type {
+		case .Editor:
+			_render_editor(cb)
+		case .Codex:
+			_render_codex(cb)
+		}
+	}
 
 	vk.CmdEndRenderPass(cb)
 	vk.EndCommandBuffer(cb)
@@ -322,6 +352,7 @@ _find_queue_families :: proc(pd: vk.PhysicalDevice, surface: vk.SurfaceKHR) -> (
 	return
 }
 
+@(private)
 _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
 	caps: vk.SurfaceCapabilitiesKHR
 	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.device, ctx.surface, &caps)
@@ -399,6 +430,7 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
 	return true
 }
 
+@(private)
 _create_image_views :: proc(ctx: ^Vulkan_Context) -> bool {
 	ctx.image_views = make([]vk.ImageView, len(ctx.swap_images))
 	for img, i in ctx.swap_images {
@@ -420,6 +452,7 @@ _create_image_views :: proc(ctx: ^Vulkan_Context) -> bool {
 	return true
 }
 
+@(private)
 _create_render_pass :: proc(ctx: ^Vulkan_Context) -> bool {
 	color_attach := vk.AttachmentDescription{
 		format         = ctx.swap_format,
@@ -455,6 +488,7 @@ _create_render_pass :: proc(ctx: ^Vulkan_Context) -> bool {
 	return vk.CreateRenderPass(ctx.logical_device, &rp_info, nil, &ctx.render_pass) == .SUCCESS
 }
 
+@(private)
 _create_framebuffers :: proc(ctx: ^Vulkan_Context) -> bool {
 	ctx.framebuffers = make([]vk.Framebuffer, len(ctx.image_views))
 	for &iv, i in ctx.image_views {
@@ -472,4 +506,14 @@ _create_framebuffers :: proc(ctx: ^Vulkan_Context) -> bool {
 		}
 	}
 	return true
+}
+
+@(private)
+_render_editor :: proc(cb: vk.CommandBuffer) {
+
+}
+
+@(private) 
+_render_codex :: proc(cb: vk.CommandBuffer) {
+
 }
