@@ -43,7 +43,17 @@ Backend_Data :: union {
 }
 
 vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u32) -> bool {
-	vk.load_proc_addresses_global(rawptr(vk.GetInstanceProcAddr))
+	if !sdl.Vulkan_LoadLibrary(nil) {
+		fmt.eprintln("vk_ctx_init: SDL failed to load Vulkan library:", sdl.GetError())
+        return false
+	}
+
+	vk_get_proc := sdl.Vulkan_GetVkGetInstanceProcAddr()
+    if vk_get_proc == nil {
+        fmt.eprintln("vk_ctx_init: SDL returned nil vkGetInstanceProcAddr")
+        return false
+    }
+    vk.load_proc_addresses_global(rawptr(vk_get_proc))  // pass the real function pointer
 
 	app_info := vk.ApplicationInfo{
 		sType              = .APPLICATION_INFO,
@@ -275,6 +285,8 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
 	vk.DestroyDevice    (ctx.logical_device, nil)
 	vk.DestroyInstance  (ctx.instance, nil)
+
+	sdl.Vulkan_UnloadLibrary()
 }
 
 //
