@@ -63,7 +63,7 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 		applicationVersion = vk.MAKE_VERSION(1, 0, 0),
 		pEngineName        = ENGINE_NAME,
 		engineVersion      = vk.MAKE_VERSION(1, 0, 0),
-		apiVersion         = vk.API_VERSION_1_3,
+		apiVersion         = vk.API_VERSION_1_4,
 	}
 
 	sdl_ext_count: u32
@@ -93,21 +93,6 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 		return false
 	}
 	vk.load_proc_addresses_instance(ctx.instance)
-
-	when ENABLE_VALIDATION {
-	    debug_info := vk.DebugUtilsMessengerCreateInfoEXT{
-	        sType = .DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-	        messageSeverity = {.ERROR, .WARNING, .INFO},
-	        messageType = {.GENERAL, .VALIDATION, .PERFORMANCE},
-	        pfnUserCallback = _vk_debug_callback,
-	    }
-	    
-	    // We must load the specific extension function pointer
-	    create_debug_messenger := cast(vk.ProcCreateDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(ctx.instance, "vkCreateDebugUtilsMessengerEXT")
-	    if create_debug_messenger != nil {
-	        create_debug_messenger(ctx.instance, &debug_info, nil, &ctx.debug_messenger)
-	    }
-	}
 
 	if !sdl.Vulkan_CreateSurface(window, ctx.instance, nil, &ctx.surface) {
 		fmt.eprintln("vk_ctx_init: SDL Vulkan_CreateSurface failed:", sdl.GetError())
@@ -263,7 +248,6 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	//
 	// ── draw calls go here (UI pass, text pass, etc.) ──
 	//
-fmt.println("Rendering views count:", len(views)) 
 	for view in views {
 		// Viewport: maps NDC [-1, 1] into this region of the framebuffer
 		viewport := vk.Viewport {
