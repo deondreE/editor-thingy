@@ -28,6 +28,7 @@ layout_init :: proc(state: ^Layout_State, width, height: f32) {
 	state.height = height
 	state.is_split = false
 	state.views = make([dynamic]View)
+	append(&state.views, View{ type = .Editor, rect = {0, 0, width, height} })
 	layout_update(state)
 }
 

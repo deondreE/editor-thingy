@@ -3,23 +3,20 @@ package main
 import "core:fmt"
 import sdl "vendor:sdl3"
 
-import engine "core"
+import engine "core" 
 
-WINDOW_WIDTH :: 1280
+WINDOW_WIDTH  :: 1280
 WINDOW_HEIGHT :: 720
 
 main :: proc() {
-	if !sdl.SetAppMetadata("Example Renderer", "1.0", "https://test-editor.org") ||
-	   !sdl.Init({.VIDEO}) {
-		fmt.eprintln("Failed to init SDL")
+	if !sdl.Init({.VIDEO}) {
+		fmt.eprintfln("Failed to init SDL: %s", sdl.GetError())
 		return
 	}
 	defer sdl.Quit()
 
-	sdl.SetHint(sdl.HINT_VIDEO_DRIVER, "")
-	sdl.Vulkan_LoadLibrary(nil)
-	defer sdl.Vulkan_UnloadLibrary()
-
+	ok_meta := sdl.SetAppMetadata("Example Renderer", "1.0", "https://test-editor.org")
+	if !ok_meta do return
 	window := sdl.CreateWindow(
 		"Example Window",
 		WINDOW_WIDTH, WINDOW_HEIGHT,
@@ -31,11 +28,14 @@ main :: proc() {
 	}
 	defer sdl.DestroyWindow(window)
 
-	// Pick backend per platform
 	backend: engine.Renderer_Backend
-	when ODIN_OS == .Windows { backend = .Vulkan } // or .DirectX12
-	when ODIN_OS == .Darwin  { backend = .Metal }
-	else                     { backend = .Vulkan }
+	when ODIN_OS == .Darwin {
+		backend = .Metal
+	} else when ODIN_OS == .Windows {
+		backend = .Vulkan // @Todo: Will Eventually be DirectX12 as well
+	} else {
+		backend = .Vulkan
+	}
 
 	renderer, ok := engine.renderer_init(backend, window)
 	if !ok {
@@ -51,7 +51,7 @@ main :: proc() {
 	main_loop: for {
 		for e: sdl.Event; sdl.PollEvent(&e); {
 			#partial switch e.type {
-			case .QUIT, .WINDOW_CLOSE_REQUESTED:
+			case .QUIT:
 				break main_loop
 			case .KEY_UP:
 				switch e.key.key {
@@ -61,16 +61,13 @@ main :: proc() {
 					engine.layout_toggle_split(&layout)
 				}
 			case .WINDOW_RESIZED:
-				engine.layout_resize(
-					&layout,
-					f32(e.window.data1),
-					f32(e.window.data2),
-				)
+				w, h: i32
+				sdl.GetWindowSizeInPixels(window, &w, &h)
+			    engine.layout_resize(&layout, f32(w), f32(h))
+			    engine.renderer_rebuild_swapchain(renderer, u32(w), u32(h))
 			}
 		}
 
 		engine.renderer_render(renderer, layout.views[:])
 	}
-
 }
-

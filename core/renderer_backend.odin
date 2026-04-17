@@ -3,7 +3,6 @@ package core
 
 import vk "vendor:vulkan"
 import sdl "vendor:sdl3"
-import "core:strings"
 import "core:fmt"
 import "base:runtime"
 
@@ -28,6 +27,9 @@ Vulkan_Context :: struct {
 	img_available: vk.Semaphore,
 	render_finished: vk.Semaphore,
 	in_flight: vk.Fence,
+	pipeline:        vk.Pipeline,
+	pipeline_layout: vk.PipelineLayout,
+	debug_messenger: vk.DebugUtilsMessengerEXT,
 }
 
 APP_NAME :: "Editor"
@@ -36,7 +38,7 @@ ENGINE_NAME :: "Editor Engine"
 VALIDATION_LAYERS := []cstring{"VK_LAYER_KHRONOS_validation"}
 DEVICE_EXTENSIONS := []cstring{vk.KHR_SWAPCHAIN_EXTENSION_NAME}
 
-ENABLE_VALIDATION :: ODIN_DEBUG
+ENABLE_VALIDATION :: true
 
 Backend_Data :: union {
 	^Vulkan_Context
@@ -61,7 +63,7 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 		applicationVersion = vk.MAKE_VERSION(1, 0, 0),
 		pEngineName        = ENGINE_NAME,
 		engineVersion      = vk.MAKE_VERSION(1, 0, 0),
-		apiVersion         = vk.API_VERSION_1_4,
+		apiVersion         = vk.API_VERSION_1_3,
 	}
 
 	sdl_ext_count: u32
@@ -91,6 +93,21 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 		return false
 	}
 	vk.load_proc_addresses_instance(ctx.instance)
+
+	when ENABLE_VALIDATION {
+	    debug_info := vk.DebugUtilsMessengerCreateInfoEXT{
+	        sType = .DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+	        messageSeverity = {.ERROR, .WARNING, .INFO},
+	        messageType = {.GENERAL, .VALIDATION, .PERFORMANCE},
+	        pfnUserCallback = _vk_debug_callback,
+	    }
+	    
+	    // We must load the specific extension function pointer
+	    create_debug_messenger := cast(vk.ProcCreateDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(ctx.instance, "vkCreateDebugUtilsMessengerEXT")
+	    if create_debug_messenger != nil {
+	        create_debug_messenger(ctx.instance, &debug_info, nil, &ctx.debug_messenger)
+	    }
+	}
 
 	if !sdl.Vulkan_CreateSurface(window, ctx.instance, nil, &ctx.surface) {
 		fmt.eprintln("vk_ctx_init: SDL Vulkan_CreateSurface failed:", sdl.GetError())
@@ -203,21 +220,28 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.render_finished)
 	vk.CreateFence    (ctx.logical_device, &fence_info, nil, &ctx.in_flight)
 
+	if !pipeline_create(ctx) do return false
+
 	return true
 }
 
 // Takes specification on what to render, and where to render it.
 vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	vk.WaitForFences(ctx.logical_device, 1, &ctx.in_flight, true, max(u64))
-	vk.ResetFences  (ctx.logical_device, 1, &ctx.in_flight)
+	
 
 	img_idx: u32
 	result := vk.AcquireNextImageKHR(ctx.logical_device, ctx.swap_chain, max(u64),
 	                       ctx.img_available, 0, &img_idx)
 	if result == .ERROR_OUT_OF_DATE_KHR {
-		// @Todo: Handle Swapchain rebuild on resize
 		return
 	}
+	if result != .SUCCESS {
+		fmt.eprintln("vk_ctx_render: AcquireNextImageKHR failed:", result)
+		return
+	}
+
+	vk.ResetFences(ctx.logical_device, 1, &ctx.in_flight)
 
 	cb := ctx.cmd_buffers[img_idx]
 	vk.ResetCommandBuffer(cb, {})
@@ -225,7 +249,7 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	begin_info := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO}
 	vk.BeginCommandBuffer(cb, &begin_info)
 
-	clear_color := vk.ClearValue{color = {float32 = {0.05, 0.05, 0.05, 1.0}}}
+	clear_color := vk.ClearValue{color = {float32 = {1.0, 0.0, 1.0, 1.0}}} 
 	rp_begin := vk.RenderPassBeginInfo{
 		sType           = .RENDER_PASS_BEGIN_INFO,
 		renderPass      = ctx.render_pass,
@@ -239,7 +263,7 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	//
 	// ── draw calls go here (UI pass, text pass, etc.) ──
 	//
-
+fmt.println("Rendering views count:", len(views)) 
 	for view in views {
 		// Viewport: maps NDC [-1, 1] into this region of the framebuffer
 		viewport := vk.Viewport {
@@ -260,9 +284,9 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 
 		switch view.type {
 		case .Editor:
-			_render_editor(cb)
+			_render_editor(cb, ctx)
 		case .Codex:
-			_render_codex(cb)
+			_render_codex(cb, ctx)
 		}
 	}
 
@@ -295,6 +319,8 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 
 vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 	vk.DeviceWaitIdle(ctx.logical_device)
+	
+	pipeline_destroy(ctx)
 
 	vk.DestroySemaphore(ctx.logical_device, ctx.img_available,   nil)
 	vk.DestroySemaphore(ctx.logical_device, ctx.render_finished, nil)
@@ -313,10 +339,29 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 	delete(ctx.cmd_buffers)
 
 	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
-	vk.DestroyDevice    (ctx.logical_device, nil)
-	vk.DestroyInstance  (ctx.instance, nil)
+	when ENABLE_VALIDATION {
+        if ctx.debug_messenger != 0 {
+            destroy_fn := cast(vk.ProcDestroyDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(ctx.instance, "vkDestroyDebugUtilsMessengerEXT")
+            if destroy_fn != nil {
+                destroy_fn(ctx.instance, ctx.debug_messenger, nil)
+            }
+        }
+    }
+
+	vk.DestroyDevice(ctx.logical_device, nil)
+	vk.DestroyInstance(ctx.instance, nil)
 
 	sdl.Vulkan_UnloadLibrary()
+}
+
+renderer_rebuild_swapchain :: proc(r: ^Renderer, width, height: u32) {
+	switch d in r.backend_data {
+	case ^Vulkan_Context:
+		if vk_ctx_rebuild_swapchain(d, width, height) {
+			r.width  = i32(width)
+			r.height = i32(height)
+		}
+	}
 }
 
 //
@@ -431,6 +476,20 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
 }
 
 @(private)
+_vk_debug_callback :: proc "system" (
+    severity: vk.DebugUtilsMessageSeverityFlagsEXT,
+    type:     vk.DebugUtilsMessageTypeFlagsEXT,
+    data:     ^vk.DebugUtilsMessengerCallbackDataEXT,
+    user_data: rawptr,
+) -> b32 {
+    context = runtime.default_context() 
+    
+    fmt.eprintfln("[%v] %s", severity, data.pMessage)
+    
+    return false 
+}
+
+@(private)
 _create_image_views :: proc(ctx: ^Vulkan_Context) -> bool {
 	ctx.image_views = make([]vk.ImageView, len(ctx.swap_images))
 	for img, i in ctx.swap_images {
@@ -509,11 +568,18 @@ _create_framebuffers :: proc(ctx: ^Vulkan_Context) -> bool {
 }
 
 @(private)
-_render_editor :: proc(cb: vk.CommandBuffer) {
-
+_render_editor :: proc(cb: vk.CommandBuffer, ctx: ^Vulkan_Context) {
+	color := Push_Constants{color = VIEW_COLORS[.Editor]}
+	vk.CmdBindPipeline(cb, .GRAPHICS, ctx.pipeline)
+	vk.CmdPushConstants(cb, ctx.pipeline_layout, {.FRAGMENT}, 0, size_of(Push_Constants), &color)
+	vk.CmdDraw(cb, 4, 1, 0, 0) 
 }
 
 @(private) 
-_render_codex :: proc(cb: vk.CommandBuffer) {
-
+_render_codex :: proc(cb: vk.CommandBuffer, ctx: ^Vulkan_Context) {
+	color := Push_Constants{color = VIEW_COLORS[.Codex]}
+	vk.CmdBindPipeline(cb, .GRAPHICS, ctx.pipeline)
+	vk.CmdPushConstants(cb, ctx.pipeline_layout, {.FRAGMENT}, 0, size_of(Push_Constants), &color)
+	vk.CmdDraw(cb, 4, 1, 0, 0)
 }
+

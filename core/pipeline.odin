@@ -1,0 +1,187 @@
+#+build windows, linux
+package core
+
+import vk "vendor:vulkan"
+import sdl "vendor:sdl3"
+import "core:fmt"
+import "core:os"
+
+// Specifically matches the fullscreen.frag
+Push_Constants :: struct #align(4) {
+	color: [4]f32,
+}
+
+// @Todo: Eventually this should be a dyn load from a .json theme file.
+VIEW_COLORS := [View_Type][4]f32 {
+	.Editor  = {0.10, 0.12, 0.18, 1.0}, // dark blue-slate
+	.Codex = {0.12, 0.18, 0.10, 1.0}, // dark green-slate
+}
+
+pipeline_create :: proc(ctx: ^Vulkan_Context) -> bool {
+	vert_spv:= #load("./shaders/fullscreen.vert.spv")
+	frag_spv := #load("./shaders/fullscreen.frag.spv")
+
+	vert_module := _create_shader_module(ctx, vert_spv) or_return
+	frag_module := _create_shader_module(ctx, frag_spv) or_return
+	defer vk.DestroyShaderModule(ctx.logical_device, vert_module, nil)
+	defer vk.DestroyShaderModule(ctx.logical_device, frag_module, nil)
+
+	stages := [2]vk.PipelineShaderStageCreateInfo{
+		{
+			sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+			stage  = {.VERTEX},
+			module = vert_module,
+			pName  = "main",
+		},
+		{
+			sType  = .PIPELINE_SHADER_STAGE_CREATE_INFO,
+			stage  = {.FRAGMENT},
+			module = frag_module,
+			pName  = "main",
+		},
+	}
+
+	vertex_input := vk.PipelineVertexInputStateCreateInfo{
+		sType = .PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+	}
+	input_assembly := vk.PipelineInputAssemblyStateCreateInfo{
+		sType    = .PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		topology = .TRIANGLE_STRIP,
+	}
+
+	dynamic_states := [2]vk.DynamicState{.VIEWPORT, .SCISSOR}
+	dynamic_state := vk.PipelineDynamicStateCreateInfo{
+		sType             = .PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+		dynamicStateCount = 2,
+		pDynamicStates    = &dynamic_states[0],
+	}
+	viewport_state := vk.PipelineViewportStateCreateInfo{
+		sType         = .PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+		viewportCount = 1,
+		scissorCount  = 1,
+	}
+	rasterizer := vk.PipelineRasterizationStateCreateInfo{
+		sType       = .PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		polygonMode = .FILL,
+		cullMode    = {},
+		frontFace   = .CLOCKWISE,
+		lineWidth   = 1.0,
+	}
+	multisample := vk.PipelineMultisampleStateCreateInfo{
+		sType                = .PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+		rasterizationSamples = {._1},
+	}
+	blend_attach := vk.PipelineColorBlendAttachmentState{
+		colorWriteMask = {.R, .G, .B, .A},
+	}
+	color_blend := vk.PipelineColorBlendStateCreateInfo{
+		sType           = .PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		attachmentCount = 1,
+		pAttachments    = &blend_attach,
+	}
+
+	pc_range := vk.PushConstantRange{
+		stageFlags = {.FRAGMENT},
+		offset     = 0,
+		size       = size_of(Push_Constants),
+	}
+	layout_info := vk.PipelineLayoutCreateInfo{
+		sType                  = .PIPELINE_LAYOUT_CREATE_INFO,
+		pushConstantRangeCount = 1,
+		pPushConstantRanges    = &pc_range,
+	}
+	if vk.CreatePipelineLayout(ctx.logical_device, &layout_info, nil, &ctx.pipeline_layout) != .SUCCESS {
+		fmt.eprintln("pipeline_create: failed to create pipeline layout")
+		return false
+	}
+
+	pipeline_info := vk.GraphicsPipelineCreateInfo{
+		sType               = .GRAPHICS_PIPELINE_CREATE_INFO,
+		stageCount          = 2,
+		pStages             = &stages[0],
+		pVertexInputState   = &vertex_input,
+		pInputAssemblyState = &input_assembly,
+		pViewportState      = &viewport_state,
+		pRasterizationState = &rasterizer,
+		pMultisampleState   = &multisample,
+		pColorBlendState    = &color_blend,
+		pDynamicState       = &dynamic_state,
+		layout              = ctx.pipeline_layout,
+		renderPass          = ctx.render_pass,
+		subpass             = 0,
+	}
+	if vk.CreateGraphicsPipelines(ctx.logical_device, 0, 1, &pipeline_info, nil, &ctx.pipeline) != .SUCCESS {
+		fmt.eprintln("pipeline_create: failed to create graphics pipeline")
+		return false
+	}
+
+	return true
+}
+
+pipeline_destroy :: proc(ctx: ^Vulkan_Context) {
+	vk.DestroyPipeline      (ctx.logical_device, ctx.pipeline,        nil)
+	vk.DestroyPipelineLayout(ctx.logical_device, ctx.pipeline_layout, nil)
+}
+
+@(private)
+_create_shader_module :: proc(ctx: ^Vulkan_Context, spv: []byte) -> (vk.ShaderModule, bool) {
+	info := vk.ShaderModuleCreateInfo{
+		sType    = .SHADER_MODULE_CREATE_INFO,
+		codeSize = len(spv),
+		pCode    = cast(^u32)raw_data(spv),
+	}
+	module: vk.ShaderModule
+	if vk.CreateShaderModule(ctx.logical_device, &info, nil, &module) != .SUCCESS {
+		fmt.eprintln("_create_shader_module: failed")
+		return {}, false
+	}
+	return module, true
+}
+
+vk_ctx_rebuild_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
+	vk.DeviceWaitIdle(ctx.logical_device)
+
+	// Tear down framebuffer-level resources
+	for fb in ctx.framebuffers do vk.DestroyFramebuffer(ctx.logical_device, fb, nil)
+	for iv in ctx.image_views  do vk.DestroyImageView  (ctx.logical_device, iv, nil)
+	delete(ctx.framebuffers)
+	delete(ctx.image_views)
+	delete(ctx.swap_images)
+
+	old_swapchain := ctx.swap_chain
+	ctx.swap_chain = 0 // clear so _create_swapchain starts fresh
+
+	if !_create_swapchain(ctx, width, height) {
+		vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
+		return false
+	}
+	if !_create_image_views(ctx) {
+		vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
+		return false
+	}
+	if !_create_framebuffers(ctx) {
+		vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
+		return false
+	}
+
+	vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
+
+	vk.FreeCommandBuffers(
+		ctx.logical_device, ctx.cmd_pool,
+		u32(len(ctx.cmd_buffers)), raw_data(ctx.cmd_buffers),
+	)
+	delete(ctx.cmd_buffers)
+	ctx.cmd_buffers = make([]vk.CommandBuffer, len(ctx.framebuffers))
+	alloc_info := vk.CommandBufferAllocateInfo{
+		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
+		commandPool        = ctx.cmd_pool,
+		level              = .PRIMARY,
+		commandBufferCount = u32(len(ctx.cmd_buffers)),
+	}
+	if vk.AllocateCommandBuffers(ctx.logical_device, &alloc_info, raw_data(ctx.cmd_buffers)) != .SUCCESS {
+		fmt.eprintln("vk_ctx_rebuild_swapchain: failed to reallocate command buffers")
+		return false
+	}
+
+	return true
+}

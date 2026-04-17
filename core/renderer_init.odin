@@ -11,14 +11,11 @@ Renderer_Backend :: enum {
 }
 
 Renderer :: struct {
-	backend: Renderer_Backend,
-	backend_data:  Backend_Data,
+	backend:      Renderer_Backend,
+	backend_data: Backend_Data,
 	width, height: i32,
 }
 
-// Initializes rendering backend on a per platform basis.
-// For the platforms that support multiple backends, it allows you to choose which
-// one you want to support directly.
 renderer_init :: proc(
 	backend: Renderer_Backend = .Vulkan,
 	window: ^sdl.Window,
@@ -34,33 +31,28 @@ renderer_init :: proc(
 	r := new(Renderer)
 	r.backend = backend
 
-	// Fetch window size to store in our renderer state
+	// Fetch window size
 	w, h: i32
-	sdl.GetWindowSize(window, &w, &h)
+	sdl.GetWindowSizeInPixels(window, &w, &h)
 	r.width = w
 	r.height = h
 
 	switch backend { 
 	case .Vulkan:
-		surface, ok := _create_surface_from_sdl(window)
-		if !ok {
-			fmt.eprintln("renderer_init: failed to create Vulkan surface.")
-			free(r)
-			return nil, false
-		}
-
 		ctx := new(Vulkan_Context)
+		// vk_ctx_init already handles surface creation via SDL3 internally
 		if !vk_ctx_init(ctx, window, u32(w), u32(h)) {
 			fmt.eprintln("renderer_init: vk_ctx_init failed")
 			free(ctx)
 			free(r)
 			return nil, false
 		}
+		
+		r.backend_data = ctx
+
 	case .DirectX12:
 		when ODIN_OS == .Windows {
-			hwnd := sdl.GetPointerProperty(props, sdl.PROP_WINDOW_WIN32_HWND_POINTER, nil)
-			fmt.printf("renderer_init: D3D12 HWND %p (stub)\n", hwnd)
-			// r.backend_data = d3d12_ctx_init(hwnd, u32(w), u32(h))
+			// Initialize DX12 and assign to r.backend_data
 		} else {
 			fmt.eprintln("renderer_init: DirectX12 only supported on Windows")
 			free(r)
@@ -68,9 +60,7 @@ renderer_init :: proc(
 		}
 	case .Metal:
 		when ODIN_OS == .Darwin {
-			view := sdl.GetPointerProperty(props, sdl.PROP_WINDOW_COCOA_METAL_VIEW_TAG, nil)
-			fmt.printf("renderer_init: Metal NSView %p (stub)\n", view)
-			// r.backend_data = metal_ctx_init(view, u32(w), u32(h))
+			// Initialize Metal and assign to r.backend_data
 		} else {
 			fmt.eprintln("renderer_init: Metal only supported on Darwin")
 			free(r)
@@ -83,9 +73,10 @@ renderer_init :: proc(
 
 renderer_render :: proc(r: ^Renderer, views: []View) {
 	if r == nil do return
+	
 	switch d in r.backend_data {
-		case ^Vulkan_Context:
-			vk_ctx_render(d, views)
+	case ^Vulkan_Context:
+		vk_ctx_render(d, views)
 	}
 }
 
@@ -93,20 +84,10 @@ renderer_shutdown :: proc(r: ^Renderer) {
 	if r == nil do return
 
 	switch d in r.backend_data {
-		case ^Vulkan_Context:
-			vk_ctx_destroy(d)
-			free(d)
+	case ^Vulkan_Context:
+		vk_ctx_destroy(d)
+		free(d)
 	}
 
 	free(r)
 }
-
-when ODIN_OS == .Windows || ODIN_OS == .Linux {
-	@(private)
-	_create_surface_from_sdl :: proc (window: ^sdl.Window) -> (vk.SurfaceKHR, bool) {
-		surface: vk.SurfaceKHR
-		_ = window
-		return surface, true
-	}
-}
-
