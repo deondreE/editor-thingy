@@ -15,13 +15,9 @@ main :: proc() {
 	}
 	defer sdl.Quit()
 
-	ok_meta := sdl.SetAppMetadata("Example Renderer", "1.0", "https://test-editor.org")
-	if !ok_meta do return
-	window := sdl.CreateWindow(
-		"Example Window",
-		WINDOW_WIDTH, WINDOW_HEIGHT,
-		{.RESIZABLE, .VULKAN},
-	)
+	if !sdl.SetAppMetadata("Example Renderer", "1.0", "https://test-editor.org") do return
+
+	window := sdl.CreateWindow("Example Window", WINDOW_WIDTH, WINDOW_HEIGHT, {.RESIZABLE, .VULKAN})
 	if window == nil {
 		fmt.eprintln("Failed to create window:", sdl.GetError())
 		return
@@ -31,8 +27,6 @@ main :: proc() {
 	backend: engine.Renderer_Backend
 	when ODIN_OS == .Darwin {
 		backend = .Metal
-	} else when ODIN_OS == .Windows {
-		backend = .Vulkan // @Todo: Will Eventually be DirectX12 as well
 	} else {
 		backend = .Vulkan
 	}
@@ -48,24 +42,27 @@ main :: proc() {
 	engine.layout_init(&layout, WINDOW_WIDTH, WINDOW_HEIGHT)
 	defer engine.layout_destroy(&layout)
 
-	main_loop: for {
+	inp: engine.Input
+
+	for {
+		engine.input_begin_frame(&inp)
+
 		for e: sdl.Event; sdl.PollEvent(&e); {
-			#partial switch e.type {
-			case .QUIT:
-				break main_loop
-			case .KEY_UP:
-				switch e.key.key {
-				case sdl.K_ESCAPE:
-					break main_loop
-				case sdl.K_S:
-					engine.layout_toggle_split(&layout)
-				}
-			case .WINDOW_RESIZED:
+			engine.input_process_event(&inp, e)
+
+			// window events still need direct handling
+			if e.type == .WINDOW_RESIZED {
 				w, h: i32
 				sdl.GetWindowSizeInPixels(window, &w, &h)
-			    engine.layout_resize(&layout, f32(w), f32(h))
-			    engine.renderer_rebuild_swapchain(renderer, u32(w), u32(h))
+				engine.layout_resize(&layout, f32(w), f32(h))
+				engine.renderer_rebuild_swapchain(renderer, u32(w), u32(h))
 			}
+		}
+
+		if inp.quit || engine.input_key_pressed(&inp, .Escape) do break
+
+		if engine.input_key_pressed(&inp, .S) {
+			engine.layout_toggle_split(&layout)
 		}
 
 		engine.renderer_render(renderer, layout.views[:])
