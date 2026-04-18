@@ -119,8 +119,14 @@ pipeline_create :: proc(ctx: ^Vulkan_Context) -> bool {
 }
 
 pipeline_destroy :: proc(ctx: ^Vulkan_Context) {
-	vk.DestroyPipeline      (ctx.logical_device, ctx.pipeline,        nil)
-	vk.DestroyPipelineLayout(ctx.logical_device, ctx.pipeline_layout, nil)
+	if ctx.pipeline != 0 {
+		vk.DestroyPipeline(ctx.logical_device, ctx.pipeline, nil)
+		ctx.pipeline = 0
+	}
+	if ctx.pipeline_layout != 0 {
+		vk.DestroyPipelineLayout(ctx.logical_device, ctx.pipeline_layout, nil)
+		ctx.pipeline_layout = 0
+	}
 }
 
 @(private)
@@ -141,36 +147,85 @@ _create_shader_module :: proc(ctx: ^Vulkan_Context, spv: []byte) -> (vk.ShaderMo
 vk_ctx_rebuild_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
 	vk.DeviceWaitIdle(ctx.logical_device)
 
-	// Tear down framebuffer-level resources
+	fail_rebuild :: proc(ctx: ^Vulkan_Context, old_swapchain: vk.SwapchainKHR) -> bool {
+		_destroy_render_finished_semaphores(ctx)
+
+		for fb in ctx.framebuffers do vk.DestroyFramebuffer(ctx.logical_device, fb, nil)
+		delete(ctx.framebuffers)
+		ctx.framebuffers = nil
+
+		for iv in ctx.image_views do vk.DestroyImageView(ctx.logical_device, iv, nil)
+		delete(ctx.image_views)
+		ctx.image_views = nil
+
+		delete(ctx.swap_images)
+		ctx.swap_images = nil
+
+		pipeline_destroy(ctx)
+		if ctx.render_pass != 0 {
+			vk.DestroyRenderPass(ctx.logical_device, ctx.render_pass, nil)
+			ctx.render_pass = 0
+		}
+
+		delete(ctx.cmd_buffers)
+		ctx.cmd_buffers = nil
+
+		if ctx.swap_chain != 0 {
+			vk.DestroySwapchainKHR(ctx.logical_device, ctx.swap_chain, nil)
+			ctx.swap_chain = 0
+		}
+		if old_swapchain != 0 {
+			vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
+		}
+
+		return false
+	}
+
+	_destroy_render_finished_semaphores(ctx)
+
 	for fb in ctx.framebuffers do vk.DestroyFramebuffer(ctx.logical_device, fb, nil)
 	for iv in ctx.image_views  do vk.DestroyImageView  (ctx.logical_device, iv, nil)
+	pipeline_destroy(ctx)
+	if ctx.render_pass != 0 {
+		vk.DestroyRenderPass(ctx.logical_device, ctx.render_pass, nil)
+		ctx.render_pass = 0
+	}
+
 	delete(ctx.framebuffers)
+	ctx.framebuffers = nil
 	delete(ctx.image_views)
+	ctx.image_views = nil
 	delete(ctx.swap_images)
-
-	old_swapchain := ctx.swap_chain
-	ctx.swap_chain = 0 // clear so _create_swapchain starts fresh
-
-	if !_create_swapchain(ctx, width, height) {
-		vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
-		return false
-	}
-	if !_create_image_views(ctx) {
-		vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
-		return false
-	}
-	if !_create_framebuffers(ctx) {
-		vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
-		return false
-	}
-
-	vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
+	ctx.swap_images = nil
 
 	vk.FreeCommandBuffers(
 		ctx.logical_device, ctx.cmd_pool,
 		u32(len(ctx.cmd_buffers)), raw_data(ctx.cmd_buffers),
 	)
 	delete(ctx.cmd_buffers)
+	ctx.cmd_buffers = nil
+
+	old_swapchain := ctx.swap_chain
+	ctx.swap_chain = 0
+
+	if !_create_swapchain(ctx, width, height, old_swapchain) {
+		if old_swapchain != 0 {
+			vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
+		}
+		return false
+	}
+	if !_create_image_views(ctx) {
+		return fail_rebuild(ctx, old_swapchain)
+	}
+	if !_create_render_pass(ctx) {
+		return fail_rebuild(ctx, old_swapchain)
+	}
+	if !_create_framebuffers(ctx) {
+		return fail_rebuild(ctx, old_swapchain)
+	}
+	if !pipeline_create(ctx) {
+		return fail_rebuild(ctx, old_swapchain)
+	}
 	ctx.cmd_buffers = make([]vk.CommandBuffer, len(ctx.framebuffers))
 	alloc_info := vk.CommandBufferAllocateInfo{
 		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
@@ -180,7 +235,15 @@ vk_ctx_rebuild_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bo
 	}
 	if vk.AllocateCommandBuffers(ctx.logical_device, &alloc_info, raw_data(ctx.cmd_buffers)) != .SUCCESS {
 		fmt.eprintln("vk_ctx_rebuild_swapchain: failed to reallocate command buffers")
-		return false
+		return fail_rebuild(ctx, old_swapchain)
+	}
+	if !_create_render_finished_semaphores(ctx) {
+		fmt.eprintln("vk_ctx_rebuild_swapchain: failed to recreate present semaphores")
+		return fail_rebuild(ctx, old_swapchain)
+	}
+
+	if old_swapchain != 0 {
+		vk.DestroySwapchainKHR(ctx.logical_device, old_swapchain, nil)
 	}
 
 	return true

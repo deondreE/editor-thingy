@@ -4,3 +4,15 @@
 *.rdi
 *.pdb
 *.spv
+editor-thingy
+.brain/
+.plan/
+
+# brain:begin gitignore-session
+.brain/session.json
+.brain/sessions/
+.brain/policy.override.yaml
+.brain/state/
+.codex/skills/
+.openclaw/skills/
+# brain:end gitignore-session
