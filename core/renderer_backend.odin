@@ -7,6 +7,7 @@ import "core:fmt"
 import "base:runtime"
 
 Vulkan_Context :: struct {
+	window: ^sdl.Window,
 	instance: vk.Instance,
 	device:   vk.PhysicalDevice,
 	logical_device: vk.Device,
@@ -25,11 +26,12 @@ Vulkan_Context :: struct {
 	cmd_pool: vk.CommandPool,
 	cmd_buffers: []vk.CommandBuffer,
 	img_available: vk.Semaphore,
-	render_finished: vk.Semaphore,
+	render_finished: []vk.Semaphore,
 	in_flight: vk.Fence,
 	pipeline:        vk.Pipeline,
 	pipeline_layout: vk.PipelineLayout,
 	debug_messenger: vk.DebugUtilsMessengerEXT,
+	swapchain_needs_rebuild: bool,
 }
 
 APP_NAME :: "Editor"
@@ -45,6 +47,8 @@ Backend_Data :: union {
 }
 
 vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u32) -> bool {
+	ctx.window = window
+
 	if !sdl.Vulkan_LoadLibrary(nil) {
 		fmt.eprintln("vk_ctx_init: SDL failed to load Vulkan library:", sdl.GetError())
         return false
@@ -159,7 +163,7 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	//
 	// Swapchain
 	//
-	if !_create_swapchain(ctx, width, height) do return false
+	if !_create_swapchain(ctx, width, height, 0) do return false
 
 	//
 	// Image views
@@ -201,9 +205,13 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	//
 	sem_info   := vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO}
 	fence_info := vk.FenceCreateInfo{sType = .FENCE_CREATE_INFO, flags = {.SIGNALED}}
-	vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.img_available)
-	vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.render_finished)
-	vk.CreateFence    (ctx.logical_device, &fence_info, nil, &ctx.in_flight)
+	if vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.img_available) != .SUCCESS {
+		return false
+	}
+	if vk.CreateFence(ctx.logical_device, &fence_info, nil, &ctx.in_flight) != .SUCCESS {
+		return false
+	}
+	if !_create_render_finished_semaphores(ctx) do return false
 
 	if !pipeline_create(ctx) do return false
 
@@ -212,6 +220,8 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 
 // Takes specification on what to render, and where to render it.
 vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
+	if ctx.swapchain_needs_rebuild && !_try_rebuild_swapchain(ctx) do return
+
 	vk.WaitForFences(ctx.logical_device, 1, &ctx.in_flight, true, max(u64))
 	
 
@@ -219,9 +229,12 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	result := vk.AcquireNextImageKHR(ctx.logical_device, ctx.swap_chain, max(u64),
 	                       ctx.img_available, 0, &img_idx)
 	if result == .ERROR_OUT_OF_DATE_KHR {
+		ctx.swapchain_needs_rebuild = true
 		return
 	}
-	if result != .SUCCESS {
+	if result == .SUBOPTIMAL_KHR {
+		ctx.swapchain_needs_rebuild = true
+	} else if result != .SUCCESS {
 		fmt.eprintln("vk_ctx_render: AcquireNextImageKHR failed:", result)
 		return
 	}
@@ -286,19 +299,30 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 		commandBufferCount   = 1,
 		pCommandBuffers      = &cb,
 		signalSemaphoreCount = 1,
-		pSignalSemaphores    = &ctx.render_finished,
+		pSignalSemaphores    = &ctx.render_finished[img_idx],
 	}
-	vk.QueueSubmit(ctx.graphics_queue, 1, &submit, ctx.in_flight)
+	if vk.QueueSubmit(ctx.graphics_queue, 1, &submit, ctx.in_flight) != .SUCCESS {
+		fmt.eprintln("vk_ctx_render: QueueSubmit failed")
+		ctx.swapchain_needs_rebuild = true
+		return
+	}
 
 	present := vk.PresentInfoKHR{
 		sType              = .PRESENT_INFO_KHR,
 		waitSemaphoreCount = 1,
-		pWaitSemaphores    = &ctx.render_finished,
+		pWaitSemaphores    = &ctx.render_finished[img_idx],
 		swapchainCount     = 1,
 		pSwapchains        = &ctx.swap_chain,
 		pImageIndices      = &img_idx,
 	}
-	vk.QueuePresentKHR(ctx.present_queue, &present)
+	result = vk.QueuePresentKHR(ctx.present_queue, &present)
+	if result == .ERROR_OUT_OF_DATE_KHR || result == .SUBOPTIMAL_KHR {
+		ctx.swapchain_needs_rebuild = true
+		return
+	}
+	if result != .SUCCESS {
+		fmt.eprintln("vk_ctx_render: QueuePresentKHR failed:", result)
+	}
 }
 
 vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
@@ -306,29 +330,52 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 	
 	pipeline_destroy(ctx)
 
-	vk.DestroySemaphore(ctx.logical_device, ctx.img_available,   nil)
-	vk.DestroySemaphore(ctx.logical_device, ctx.render_finished, nil)
-	vk.DestroyFence    (ctx.logical_device, ctx.in_flight,       nil)
+	if ctx.img_available != 0 {
+		vk.DestroySemaphore(ctx.logical_device, ctx.img_available, nil)
+		ctx.img_available = 0
+	}
+	_destroy_render_finished_semaphores(ctx)
+	if ctx.in_flight != 0 {
+		vk.DestroyFence(ctx.logical_device, ctx.in_flight, nil)
+		ctx.in_flight = 0
+	}
 
-	vk.DestroyCommandPool(ctx.logical_device, ctx.cmd_pool, nil)
+	if ctx.cmd_pool != 0 {
+		vk.DestroyCommandPool(ctx.logical_device, ctx.cmd_pool, nil)
+		ctx.cmd_pool = 0
+	}
 
 	for fb in ctx.framebuffers  do vk.DestroyFramebuffer(ctx.logical_device, fb, nil)
-	vk.DestroyRenderPass(ctx.logical_device, ctx.render_pass, nil)
+	if ctx.render_pass != 0 {
+		vk.DestroyRenderPass(ctx.logical_device, ctx.render_pass, nil)
+		ctx.render_pass = 0
+	}
 	for iv in ctx.image_views   do vk.DestroyImageView(ctx.logical_device, iv, nil)
-	vk.DestroySwapchainKHR(ctx.logical_device, ctx.swap_chain, nil)
+	if ctx.swap_chain != 0 {
+		vk.DestroySwapchainKHR(ctx.logical_device, ctx.swap_chain, nil)
+		ctx.swap_chain = 0
+	}
 
 	delete(ctx.framebuffers)
+	ctx.framebuffers = nil
 	delete(ctx.image_views)
+	ctx.image_views = nil
 	delete(ctx.swap_images)
+	ctx.swap_images = nil
 	delete(ctx.cmd_buffers)
+	ctx.cmd_buffers = nil
 
-	vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
+	if ctx.surface != 0 {
+		vk.DestroySurfaceKHR(ctx.instance, ctx.surface, nil)
+		ctx.surface = 0
+	}
 	when ENABLE_VALIDATION {
         if ctx.debug_messenger != 0 {
             destroy_fn := cast(vk.ProcDestroyDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(ctx.instance, "vkDestroyDebugUtilsMessengerEXT")
             if destroy_fn != nil {
                 destroy_fn(ctx.instance, ctx.debug_messenger, nil)
             }
+            ctx.debug_messenger = 0
         }
     }
 
@@ -341,10 +388,9 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 renderer_rebuild_swapchain :: proc(r: ^Renderer, width, height: u32) {
 	switch d in r.backend_data {
 	case ^Vulkan_Context:
-		if vk_ctx_rebuild_swapchain(d, width, height) {
-			r.width  = i32(width)
-			r.height = i32(height)
-		}
+		r.width  = i32(width)
+		r.height = i32(height)
+		d.swapchain_needs_rebuild = true
 	}
 }
 
@@ -382,7 +428,7 @@ _find_queue_families :: proc(pd: vk.PhysicalDevice, surface: vk.SurfaceKHR) -> (
 }
 
 @(private)
-_create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
+_create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32, old_swapchain: vk.SwapchainKHR = 0) -> bool {
 	caps: vk.SurfaceCapabilitiesKHR
 	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.device, ctx.surface, &caps)
 
@@ -413,9 +459,14 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
 		if pm == .MAILBOX { chosen_pm = pm; break }
 	}
 
-	extent := vk.Extent2D{
-		width  = clamp(width,  caps.minImageExtent.width,  caps.maxImageExtent.width),
-		height = clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height),
+	extent: vk.Extent2D
+	if caps.currentExtent.width != max(u32) {
+		extent = caps.currentExtent
+	} else {
+		extent = vk.Extent2D{
+			width  = clamp(width,  caps.minImageExtent.width,  caps.maxImageExtent.width),
+			height = clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height),
+		}
 	}
 
 	img_count := caps.minImageCount + 1
@@ -445,6 +496,9 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
 	} else {
 		sc_info.imageSharingMode = .EXCLUSIVE
 	}
+	if old_swapchain != 0 {
+		sc_info.oldSwapchain = old_swapchain
+	}
 
 	if vk.CreateSwapchainKHR(ctx.logical_device, &sc_info, nil, &ctx.swap_chain) != .SUCCESS {
 		return false
@@ -456,6 +510,39 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32) -> bool {
 
 	ctx.swap_format = chosen_fmt.format
 	ctx.swap_extent = extent
+	return true
+}
+
+@(private)
+_destroy_render_finished_semaphores :: proc(ctx: ^Vulkan_Context) {
+	for sem in ctx.render_finished {
+		vk.DestroySemaphore(ctx.logical_device, sem, nil)
+	}
+	delete(ctx.render_finished)
+	ctx.render_finished = nil
+}
+
+@(private)
+_create_render_finished_semaphores :: proc(ctx: ^Vulkan_Context) -> bool {
+	_destroy_render_finished_semaphores(ctx)
+	ctx.render_finished = make([]vk.Semaphore, len(ctx.framebuffers))
+	sem_info := vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO}
+	for i in 0..<len(ctx.render_finished) {
+		if vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.render_finished[i]) != .SUCCESS {
+			_destroy_render_finished_semaphores(ctx)
+			return false
+		}
+	}
+	return true
+}
+
+@(private)
+_try_rebuild_swapchain :: proc(ctx: ^Vulkan_Context) -> bool {
+	w, h: i32
+	sdl.GetWindowSizeInPixels(ctx.window, &w, &h)
+	if w <= 0 || h <= 0 do return false
+	if !vk_ctx_rebuild_swapchain(ctx, u32(w), u32(h)) do return false
+	ctx.swapchain_needs_rebuild = false
 	return true
 }
 
@@ -566,4 +653,3 @@ _render_codex :: proc(cb: vk.CommandBuffer, ctx: ^Vulkan_Context) {
 	vk.CmdPushConstants(cb, ctx.pipeline_layout, {.FRAGMENT}, 0, size_of(Push_Constants), &color)
 	vk.CmdDraw(cb, 4, 1, 0, 0)
 }
-

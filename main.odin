@@ -62,7 +62,11 @@ main :: proc() {
 		if inp.quit || engine.input_key_pressed(&inp, .Escape) do break
 
 		if engine.input_key_pressed(&inp, .S) {
-			engine.layout_toggle_split(&layout)
+			if engine.input_mod(&inp, .Ctrl) {
+				engine.layout_toggle_codex_fullscreen(&layout)
+			} else {
+				engine.layout_toggle_split(&layout)
+			}
 		}
 
 		engine.renderer_render(renderer, layout.views[:])
