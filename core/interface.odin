@@ -1,5 +1,30 @@
 package core
 
+import stbtt "vendor:stb/truetype"
+import "core:fmt"
+import "core:math"
+
+MAX_GLYPHS :: 256
+ATLAS_SIZE :: 512
+
+Glyph_Info :: struct {
+	uv: [4]f32,
+	offset: [2]f32,
+	size: [2]f32,
+	advance: f32,
+}
+
+Font :: struct {
+    glyphs:     [MAX_GLYPHS]Glyph_Info,
+    atlas:      []u8,           // ATLAS_SIZE*ATLAS_SIZE single-channel bitmap
+    atlas_size: int,
+    texture_id: u32,            // assigned by backend after upload
+    size_px:    f32,
+    ascent:     f32,
+    descent:    f32,
+    line_gap:   f32,
+}
+
 Vertex :: struct {
 	pos: [2]f32,
 	uv: [2]f32,
@@ -39,10 +64,7 @@ Frame :: struct {
 	clip_stack: [dynamic][4]f32,
 }
 
-frame_reset :: proc(f: ^Frame) {
-	clear(&f.cmds)
-	clear(&f.clip_stack)
-}
+
 
 FULL_SCREEN_CLIP :: [4]f32{0, 0, 1e9, 1e9}
 WHITE_UV :: [4]f32{0, 0, 0, 0}
@@ -60,18 +82,45 @@ draw_image :: proc(f: ^Frame, x, y, w, h: f32, texture_id: u32,
     append(&f.cmds, Cmd_Quad{{x, y, w, h}, uvs, texture_id, tint})
 }
 
-draw_glyph :: proc(f: ^Frame, x, y, w, h: f32, uvs: [4]f32, atlas: u32, col: [4]u8) {
-    append(&f.cmds, Cmd_Quad{{x, y, w, h}, uvs, atlas, col})
+draw_glyph :: proc(f: ^Frame, font: ^Font, ch: rune, x, y: f32, col: [4]u8) -> f32 {
+    // append(&f.cmds, Cmd_Quad{{x, y, w, h}, uvs, atlas, col})
+    idx := int(ch)
+    if idx < 0 || idx >= MAX_GLYPHS do return 0
+
+    g := font.glyphs[idx]
+    if g.size.x == 0 do return g.advance
+
+    gx := x + g.offset.x
+    gy := y + g.offset.y + font.ascent
+
+    append(&f.cmds, Cmd_Quad{
+    	rect = {gx, gy, g.size.x, g.size.y},
+    	uvs = g.uv,
+    	texture_id = font.texture_id,
+    	col = col,
+    })
+    return g.advance
 }
 
-draw_text :: proc(f: ^Frame, text: string, x, y: f32, col: [4]u8,
-                  atlas: u32, lookup: proc(rune) -> (rect, uvs: [4]f32)) {
+draw_text :: proc(f: ^Frame, font: ^Font, text: string, x, y: f32, col: [4]u8) -> f32 {
     cx := x
     for ch in text {
-        r, uvs := lookup(ch)
-        draw_glyph(f, cx + r.x, y + r.y, r.z, r.w, uvs, atlas, col)
-        cx += r.z
+        cx += draw_glyph(f, font, ch, cx, y, col)
     }
+    return cx - x
+}
+
+measure_text :: proc(font: ^Font, text: string) -> f32 {
+	w: f32
+	for ch in text {
+		idx := int(ch)
+		if idx >= 0 && idx < MAX_GLYPHS do w += font.glyphs[idx].advance
+	}
+	return w
+}
+
+line_height :: proc(font: ^Font) -> f32 {
+	return font.ascent - font.descent + font.line_gap
 }
 
 push_clip :: proc(f: ^Frame, x, y, w, h: f32) {
@@ -137,4 +186,85 @@ flush :: proc(f: ^Frame, out: ^Render_List) {
 
     clear(&f.cmds)
     clear(&f.clip_stack)
+}
+
+frame_reset :: proc(f: ^Frame) {
+	clear(&f.cmds)
+	clear(&f.clip_stack)
+}
+
+//
+// Font
+//
+
+// call once with ttf file bytes -- returns a Font ready for upload
+font_init :: proc(font: ^Font, ttf_data: []u8, size_px: f32) -> bool {
+	font.size_px = size_px
+	font.atlas_size = ATLAS_SIZE
+	font.atlas = make([]u8, ATLAS_SIZE * ATLAS_SIZE)
+
+	info: stbtt.fontinfo
+	if !stbtt.InitFont(&info, raw_data(ttf_data), 0) do return false
+
+	scale := stbtt.ScaleForPixelHeight(&info, size_px)
+
+	ascent, descent, line_gap: i32
+	stbtt.GetFontVMetrics(&info, &ascent, &descent, &line_gap)
+	font.ascent = f32(ascent) * scale
+	font.descent = f32(descent) * scale
+	font.line_gap = f32(line_gap) * scale
+
+	// simple row packer
+	cx, cy, row_h: int
+
+	for ch in 0..<MAX_GLYPHS {
+		x0, y0, x1, y1: i32
+		stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &x0, &y0, &x1, &y1)
+
+		gw := int(x1 - x0)
+		gh := int(y1 - y0)
+
+		if cx + gw >= ATLAS_SIZE {
+			cy += row_h + 1
+			cx = 0
+			row_h = 0
+		}
+		if cy + gh >= ATLAS_SIZE do break
+
+		stbtt.MakeCodepointBitmap(
+            &info,
+            &font.atlas[cy*ATLAS_SIZE + cx],
+            i32(gw), i32(gh), i32(ATLAS_SIZE),
+            scale, scale, rune(ch),
+        )
+
+         ax: i32
+        stbtt.GetCodepointHMetrics(&info, rune(ch), &ax, nil)
+
+        bx, by: i32
+        stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &bx, &by, nil, nil)
+
+        inv := 1.0 / f32(ATLAS_SIZE)
+        font.glyphs[ch] = Glyph_Info{
+            uv      = {
+                f32(cx)    * inv,
+                f32(cy)    * inv,
+                f32(cx+gw) * inv,
+                f32(cy+gh) * inv,
+            },
+            offset  = {f32(bx), f32(by)},
+            size    = {f32(gw), f32(gh)},
+            advance = f32(ax) * scale,
+        }
+
+        cx   += gw + 1
+        row_h = max(row_h, gh)
+	}
+
+	return true
+}
+
+font_destroy :: proc(font: ^Font) {
+	delete(font.atlas)
+	font.atlas = nil
 }
