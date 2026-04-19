@@ -14,6 +14,25 @@ Glyph_Info :: struct {
 	advance: f32,
 }
 
+// @Todo
+
+// UI_Pipeline -- Init, Shaders
+// Style -- Struct that is shaders helpers around that
+// Auto_Layout
+// Text Align -- Center, Left, Right
+// Proper atlas packing for the fonts.
+
+// The style of the `high-level` widget in this case.
+Style :: struct {
+    font: ^Font,
+    bg_color: [4]u8,
+    fg_color: [4]u8,
+    text_color: [4]u8,
+    border_color: [4]u8,
+    padding: f32,
+    rounding: f32,
+}
+
 Font :: struct {
     glyphs:     [MAX_GLYPHS]Glyph_Info,
     atlas:      []u8,           // ATLAS_SIZE*ATLAS_SIZE single-channel bitmap
@@ -23,6 +42,12 @@ Font :: struct {
     ascent:     f32,
     descent:    f32,
     line_gap:   f32,
+}
+
+Text_Align :: enum {
+    Left,
+    Center,
+    Right,
 }
 
 Vertex :: struct {
@@ -57,15 +82,22 @@ Cmd_Clip :: struct {
     rect: [4]f32, // zeroed = full screen
 }
 
-Command :: union { Cmd_Quad, Cmd_Clip }
+Cmd_Line :: struct {
+    p0, p1: [2]f32,
+    thickness: f32,
+    col: [4]f32,
+}
+
+Command :: union { Cmd_Quad, Cmd_Clip, Cmd_Line }
 
 Frame :: struct {
 	cmds: [dynamic]Command,
 	clip_stack: [dynamic][4]f32,
 }
 
-
-
+COLOR_WHITE :: [4]u8{255, 255, 255, 255}
+COLOR_RED   :: [4]u8{200, 50, 50, 255}
+COLOR_BLACK :: [4]u8{0, 0, 0, 255}
 FULL_SCREEN_CLIP :: [4]f32{0, 0, 1e9, 1e9}
 WHITE_UV :: [4]f32{0, 0, 0, 0}
 
@@ -110,6 +142,19 @@ draw_text :: proc(f: ^Frame, font: ^Font, text: string, x, y: f32, col: [4]u8) -
     return cx - x
 }
 
+draw_text_aligned :: proc(f: ^Frame, font: ^Font, text: string, x, y, w: f32, col: [4]u8, align: Text_Align) {
+    text_width := measure_text(font, text)
+    render_x := x
+
+    switch align {
+    case .Left: render_x = x
+    case .Center: render_x = x + (w - text_width) * 0.5
+    case .Right: render_x = x + w - text_width
+    }
+
+    draw_text(f, font, text, render_x, y, col)
+}
+
 measure_text :: proc(font: ^Font, text: string) -> f32 {
 	w: f32
 	for ch in text {
@@ -136,8 +181,8 @@ pop_clip :: proc(f: ^Frame) {
 }
 
 flush :: proc(f: ^Frame, out: ^Render_List) {
-	clear(&out.vertices)
-	clear(&out.indices)
+    clear(&out.vertices)
+    clear(&out.indices)
     clear(&out.draw_calls)
 
     active_tex : u32 = 0
@@ -178,7 +223,9 @@ flush :: proc(f: ^Frame, out: ^Render_List) {
     		)
     		append(&out.indices, b, b+1, b+2, b, b+2, b+3)
     		dc.index_count += 6
-    	}
+	case Cmd_Line:
+	    break // @Todo: Make lines render
+	}
     }
 
     if dc.index_count > 0 do append(&out.draw_calls, dc)
@@ -210,7 +257,7 @@ font_init :: proc(font: ^Font, ttf_data: []u8, size_px: f32) -> bool {
 
 	ascent, descent, line_gap: i32
 	stbtt.GetFontVMetrics(&info, &ascent, &descent, &line_gap)
-	font.ascent = f32(ascent) * scale
+        font.ascent = f32(ascent) * scale
 	font.descent = f32(descent) * scale
 	font.line_gap = f32(line_gap) * scale
 
@@ -267,4 +314,15 @@ font_init :: proc(font: ^Font, ttf_data: []u8, size_px: f32) -> bool {
 font_destroy :: proc(font: ^Font) {
 	delete(font.atlas)
 	font.atlas = nil
+}
+
+
+// @Todo: Convert this to transmute later in life at some point maybe :)
+hex_to_rgba :: proc(hex: u32) -> [4]u8 {
+    return {
+	u8((hex >> 24) & 0xFF),
+	u8((hex >> 16) & 0xFF),
+	u8((hex >> 8)  & 0xFF),
+	u8(hex & 0xFF),
+    }
 }

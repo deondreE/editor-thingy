@@ -9,6 +9,10 @@ editor-thingy
 .plan/
 docs/
 
+*~
+\#*\#
+.\#*
+
 # brain:begin gitignore-session
 .brain/session.json
 .brain/sessions/
