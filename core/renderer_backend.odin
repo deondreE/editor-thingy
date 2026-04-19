@@ -32,6 +32,8 @@ Vulkan_Context :: struct {
 	pipeline_layout: vk.PipelineLayout,
 	debug_messenger: vk.DebugUtilsMessengerEXT,
 	swapchain_needs_rebuild: bool,
+
+    ui: ^UI_Context,
 }
 
 APP_NAME :: "Editor"

@@ -21,6 +21,7 @@ Glyph_Info :: struct {
 // Auto_Layout
 // Text Align -- Center, Left, Right
 // Proper atlas packing for the fonts.
+// Upload Font atlas to Vulkan :ForNow:.
 
 // The style of the `high-level` widget in this case.
 Style :: struct {

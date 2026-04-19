@@ -31,7 +31,13 @@ UI_Context :: struct {
     ibo_mem: vk.DeviceMemory,
     ibo_ptr: rawptr,
 
-    white_tex_set: vk.DescriptorSet,
+    font_image: vk.Image,
+    font_view: vk.ImageView,
+    font_sampler: vk.Sampler,
+    font_desc_set: vk.DescriptorSet,
+
+    max_vertices: int,
+    max_indices: int,
 }
 
 pipeline_create :: proc(ctx: ^Vulkan_Context) -> bool {
