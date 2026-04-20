@@ -217,7 +217,7 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 
 	if !pipeline_create(ctx) do return false
 
-    // if !ui_init(ctx) do return false
+        if !ui_init(ctx) do return false
     
 	return true
 }
@@ -331,7 +331,8 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 
 vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 	vk.DeviceWaitIdle(ctx.logical_device)
-	
+
+        ui_destroy(ctx)
 	pipeline_destroy(ctx)
 
 	if ctx.img_available != 0 {
@@ -382,8 +383,7 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 		ctx.debug_messenger = 0
             }
 	}
-
-    // ui_destroy(ctx)
+    
 
 	vk.DestroyDevice(ctx.logical_device, nil)
 	vk.DestroyInstance(ctx.instance, nil)

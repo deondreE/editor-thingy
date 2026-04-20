@@ -22,27 +22,25 @@ ui_destroy :: proc(ctx: ^Vulkan_Context) {
     dev := ctx.logical_device
     vk.DeviceWaitIdle(dev)
 
-    if ui.font_desc_set != 0 {
-	// returned to pool on pool destroy
-    }
-    if ui.font_sampler != 0 do vk.DestroySampler(dev, ui.font_sampler, nil)
-    if ui.font_view != 0 do vk.DestroyImageView(dev, ui.font_view, nil)
-    if ui.font_image != 0 do vk.DestroyImage(dev, ui.font_image, nil)
-    if ui.font_image_mem != 0 do vk.FreeMemory(dev, ui.font_image_mem, nil)
-    
+    if ui.descriptor_pool   != 0 do vk.DestroyDescriptorPool(dev, ui.descriptor_pool, nil)
+    if ui.descriptor_layout != 0 do vk.DestroyDescriptorSetLayout(dev, ui.descriptor_layout, nil)
+    if ui.font_sampler      != 0 do vk.DestroySampler(dev, ui.font_sampler, nil)
+    if ui.font_view         != 0 do vk.DestroyImageView(dev, ui.font_view, nil)
+    if ui.font_image        != 0 do vk.DestroyImage(dev, ui.font_image, nil)
+    if ui.font_image_mem    != 0 do vk.FreeMemory(dev, ui.font_image_mem, nil)  // was missing
+
     if ui.vbo != 0 {
-	vk.UnmapMemory(dev, ui.vbo_mem)
-	vk.DestroyBuffer(dev, ui.vbo, nil)
-	vk.FreeMemory(dev, ui.vbo_mem, nil)
+        vk.UnmapMemory(dev, ui.vbo_mem)
+        vk.DestroyBuffer(dev, ui.vbo, nil)
+        vk.FreeMemory(dev, ui.vbo_mem, nil)
     }
     if ui.ibo != 0 {
-	vk.UnmapMemory(dev, ui.ibo_mem)
-	vk.DestroyBuffer(dev, ui.ibo, nil)
-	vk.FreeMemory(dev, ui.vbo_mem, nil)
+        vk.UnmapMemory(dev, ui.ibo_mem)
+        vk.DestroyBuffer(dev, ui.ibo, nil)
+        vk.FreeMemory(dev, ui.ibo_mem, nil)
     }
-    if ui.descriptor_pool != 0 do vk.DestroyDescriptorPool(dev, ui.descriptor_pool, nil)
-    if ui.descriptor_layout != 0 do vk.DestroyDescriptorSetLayout(dev, ui.descriptor_layout, nil)
-    if ui.pipeline != 0 do vk.DestroyPipeline(dev, ui.pipeline, nil)
+
+    if ui.pipeline        != 0 do vk.DestroyPipeline(dev, ui.pipeline, nil)
     if ui.pipeline_layout != 0 do vk.DestroyPipelineLayout(dev, ui.pipeline_layout, nil)
 
     free(ui)
