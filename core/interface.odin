@@ -22,6 +22,7 @@ Glyph_Info :: struct {
 // Text Align -- Center, Left, Right
 // Proper atlas packing for the fonts.
 // Upload Font atlas to Vulkan :ForNow:.
+// Figure out how the Tmux style interactions will work.
 
 // The style of the `high-level` widget in this case.
 Style :: struct {

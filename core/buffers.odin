@@ -46,7 +46,6 @@ _create_ui_buffers :: proc(ctx: ^Vulkan_Context, max_v := 10000, max_i := 20000)
     return true
 }
 
-@(private)
 _find_memory_type :: proc(ctx: ^Vulkan_Context, type_filter: u32, properties: vk.MemoryPropertyFlags) -> u32 {
     mem_props: vk.PhysicalDeviceMemoryProperties
     vk.GetPhysicalDeviceMemoryProperties(ctx.device, &mem_props)

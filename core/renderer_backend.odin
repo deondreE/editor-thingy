@@ -217,6 +217,8 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 
 	if !pipeline_create(ctx) do return false
 
+    // if !ui_init(ctx) do return false
+    
 	return true
 }
 
@@ -372,14 +374,16 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 		ctx.surface = 0
 	}
 	when ENABLE_VALIDATION {
-        if ctx.debug_messenger != 0 {
-            destroy_fn := cast(vk.ProcDestroyDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(ctx.instance, "vkDestroyDebugUtilsMessengerEXT")
-            if destroy_fn != nil {
-                destroy_fn(ctx.instance, ctx.debug_messenger, nil)
+            if ctx.debug_messenger != 0 {
+		destroy_fn := cast(vk.ProcDestroyDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(ctx.instance, "vkDestroyDebugUtilsMessengerEXT")
+		if destroy_fn != nil {
+                    destroy_fn(ctx.instance, ctx.debug_messenger, nil)
+		}
+		ctx.debug_messenger = 0
             }
-            ctx.debug_messenger = 0
-        }
-    }
+	}
+
+    // ui_destroy(ctx)
 
 	vk.DestroyDevice(ctx.logical_device, nil)
 	vk.DestroyInstance(ctx.instance, nil)

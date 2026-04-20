@@ -290,8 +290,8 @@ ui_pipeline_create :: proc(ctx: ^Vulkan_Context, ui: ^UI_Context) -> bool {
 	},
 	{
 	    sType = .PIPELINE_SHADER_STAGE_CREATE_INFO,
-	    stage = {.VERTEX},
-	    module = vert_module,
+	    stage = {.FRAGMENT},
+	    module = frag_module,
 	    pName = "main",
 	}
     }
@@ -316,8 +316,8 @@ ui_pipeline_create :: proc(ctx: ^Vulkan_Context, ui: ^UI_Context) -> bool {
     }
     attribute_descs := [3]vk.VertexInputAttributeDescription{
 	{location = 0, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, pos))},
-	{location = 1, binding = 1, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, uv))},
-	{location = 2, binding = 2, format = .R8G8B8A8_UNORM, offset = u32(offset_of(Vertex, col))},
+	{location = 1, binding = 0, format = .R32G32_SFLOAT, offset = u32(offset_of(Vertex, uv))},
+	{location = 2, binding = 0, format = .R8G8B8A8_UNORM, offset = u32(offset_of(Vertex, col))},
     }
 
     vertex_input_state := vk.PipelineVertexInputStateCreateInfo {
@@ -419,5 +419,5 @@ ui_pipeline_create :: proc(ctx: ^Vulkan_Context, ui: ^UI_Context) -> bool {
 	fmt.eprintln("ui_pipeline_create: failed to create graphics pipeline")
 	return false
     }
-    return false
+    return true
 }
