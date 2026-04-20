@@ -28,10 +28,16 @@ ui_destroy :: proc(ctx: ^Vulkan_Context) {
     if ui.font_sampler != 0 do vk.DestroySampler(dev, ui.font_sampler, nil)
     if ui.font_view != 0 do vk.DestroyImageView(dev, ui.font_view, nil)
     if ui.font_image != 0 do vk.DestroyImage(dev, ui.font_image, nil)
-
+    if ui.font_image_mem != 0 do vk.FreeMemory(dev, ui.font_image_mem, nil)
+    
     if ui.vbo != 0 {
 	vk.UnmapMemory(dev, ui.vbo_mem)
 	vk.DestroyBuffer(dev, ui.vbo, nil)
+	vk.FreeMemory(dev, ui.vbo_mem, nil)
+    }
+    if ui.ibo != 0 {
+	vk.UnmapMemory(dev, ui.ibo_mem)
+	vk.DestroyBuffer(dev, ui.ibo, nil)
 	vk.FreeMemory(dev, ui.vbo_mem, nil)
     }
     if ui.descriptor_pool != 0 do vk.DestroyDescriptorPool(dev, ui.descriptor_pool, nil)
@@ -84,6 +90,7 @@ ui_font_upload :: proc(ctx: ^Vulkan_Context, font: ^Font) -> bool {
 	return false
     }
     vk.BindImageMemory(dev, ui.font_image, img_mem, 0)
+    ui.font_image_mem = img_mem
 
     atlas_bytes := vk.DeviceSize(sz * sz)
     stg_buf, stg_mem, stg_ptr := create_mapped_buffer(ctx, atlas_bytes, {.TRANSFER_SRC})
@@ -208,18 +215,18 @@ ui_render_list :: proc(ctx: ^Vulkan_Context, cb: vk.CommandBuffer, rl: ^Render_L
     vk.CmdBindIndexBuffer(cb, ui.ibo, 0, .UINT32)
 
     for dc in rl.draw_calls {
-	scissor := vk.Rect2D {
-	    offset = {i32(dc.clip_rect.x), i32(dc.clip_rect.y)},
-	    extent = {u32(dc.clip_rect.z), u32(dc.clip_rect.w)},
-	}
-	vk.CmdSetScissor(cb, 0, 1, &scissor)
+        scissor := vk.Rect2D {
+            offset = {i32(dc.clip_rect.x), i32(dc.clip_rect.y)},
+            extent = {u32(dc.clip_rect.z), u32(dc.clip_rect.w)},
+        }
+        vk.CmdSetScissor(cb, 0, 1, &scissor)
 
-	if dc.texture_id != 0 && ui.font_desc_set != 0 {
-	    vk.CmdBindDescriptorSets(cb, .GRAPHICS, ui.pipeline_layout,
-				0, 1, &ui.font_desc_set, 0, nil)
+        if dc.texture_id != 0 && ui.font_desc_set != 0 {
+            vk.CmdBindDescriptorSets(cb, .GRAPHICS, ui.pipeline_layout,
+                    0, 1, &ui.font_desc_set, 0, nil)
+        }
 
-	    vk.CmdDrawIndexed(cb, dc.index_count, 1, dc.index_offset, 0, 0)
-	}
+	vk.CmdDrawIndexed(cb, dc.index_count, 1, dc.index_offset, 0, 0)
     }
 }
 

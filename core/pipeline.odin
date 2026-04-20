@@ -32,6 +32,7 @@ UI_Context :: struct {
     ibo_ptr: rawptr,
 
     font_image: vk.Image,
+    font_image_mem: vk.DeviceMemory,
     font_view: vk.ImageView,
     font_sampler: vk.Sampler,
     font_desc_set: vk.DescriptorSet,
@@ -410,6 +411,7 @@ ui_pipeline_create :: proc(ctx: ^Vulkan_Context, ui: ^UI_Context) -> bool {
 	pMultisampleState = &multisample,
 	pColorBlendState = &color_blend,
 	pDynamicState = &dynamic_state,
+	layout = ui.pipeline_layout,
 	renderPass = ctx.render_pass,
 	subpass = 0,
 	basePipelineHandle = 0,
