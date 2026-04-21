@@ -1,39 +1,39 @@
 #+build windows, linux
 package core
 
-import vk "vendor:vulkan"
-import sdl "vendor:sdl3"
-import "core:fmt"
 import "base:runtime"
+import "core:fmt"
+import sdl "vendor:sdl3"
+import vk "vendor:vulkan"
 
 Vulkan_Context :: struct {
-	window: ^sdl.Window,
-	instance: vk.Instance,
-	device:   vk.PhysicalDevice,
-	logical_device: vk.Device,
-	surface:  vk.SurfaceKHR,
-	graphics_queue: vk.Queue,
-	present_queue: vk.Queue,
-	graphics_family: u32,
-	present_family: u32,
-	swap_chain: vk.SwapchainKHR, 
-	swap_images: []vk.Image,
-	swap_format: vk.Format,
-	swap_extent: vk.Extent2D,
-	image_views: []vk.ImageView,
-	render_pass: vk.RenderPass,
-	framebuffers: []vk.Framebuffer,
-	cmd_pool: vk.CommandPool,
-	cmd_buffers: []vk.CommandBuffer,
-	img_available: vk.Semaphore,
-	render_finished: []vk.Semaphore,
-	in_flight: vk.Fence,
-	pipeline:        vk.Pipeline,
-	pipeline_layout: vk.PipelineLayout,
-	debug_messenger: vk.DebugUtilsMessengerEXT,
+	window:                  ^sdl.Window,
+	instance:                vk.Instance,
+	device:                  vk.PhysicalDevice,
+	logical_device:          vk.Device,
+	surface:                 vk.SurfaceKHR,
+	graphics_queue:          vk.Queue,
+	present_queue:           vk.Queue,
+	graphics_family:         u32,
+	present_family:          u32,
+	swap_chain:              vk.SwapchainKHR,
+	swap_images:             []vk.Image,
+	swap_format:             vk.Format,
+	swap_extent:             vk.Extent2D,
+	image_views:             []vk.ImageView,
+	render_pass:             vk.RenderPass,
+	framebuffers:            []vk.Framebuffer,
+	cmd_pool:                vk.CommandPool,
+	cmd_buffers:             []vk.CommandBuffer,
+	img_available:           vk.Semaphore,
+	render_finished:         []vk.Semaphore,
+	in_flight:               vk.Fence,
+	pipeline:                vk.Pipeline,
+	pipeline_layout:         vk.PipelineLayout,
+	debug_messenger:         vk.DebugUtilsMessengerEXT,
 	swapchain_needs_rebuild: bool,
-
-    ui: ^UI_Context,
+	ui:                      ^UI_Context,
+	ui_system: ^Ui_System,
 }
 
 APP_NAME :: "Editor"
@@ -45,25 +45,27 @@ DEVICE_EXTENSIONS := []cstring{vk.KHR_SWAPCHAIN_EXTENSION_NAME}
 ENABLE_VALIDATION :: true
 
 Backend_Data :: union {
-	^Vulkan_Context
+	^Vulkan_Context,
 }
 
-vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u32) -> bool {
+vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u32, ui_system: ^Ui_System) -> bool {
 	ctx.window = window
+
+	ctx.ui_system = ui_system 
 
 	if !sdl.Vulkan_LoadLibrary(nil) {
 		fmt.eprintln("vk_ctx_init: SDL failed to load Vulkan library:", sdl.GetError())
-        return false
+		return false
 	}
 
 	vk_get_proc := sdl.Vulkan_GetVkGetInstanceProcAddr()
-    if vk_get_proc == nil {
-        fmt.eprintln("vk_ctx_init: SDL returned nil vkGetInstanceProcAddr")
-        return false
-    }
-    vk.load_proc_addresses_global(rawptr(vk_get_proc))  // pass the real function pointer
+	if vk_get_proc == nil {
+		fmt.eprintln("vk_ctx_init: SDL returned nil vkGetInstanceProcAddr")
+		return false
+	}
+	vk.load_proc_addresses_global(rawptr(vk_get_proc)) // pass the real function pointer
 
-	app_info := vk.ApplicationInfo{
+	app_info := vk.ApplicationInfo {
 		sType              = .APPLICATION_INFO,
 		pApplicationName   = APP_NAME,
 		applicationVersion = vk.MAKE_VERSION(1, 0, 0),
@@ -77,7 +79,7 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 
 	extensions: [dynamic]cstring
 	defer delete(extensions)
-	for i in 0..<sdl_ext_count {
+	for i in 0 ..< sdl_ext_count {
 		append(&extensions, sdl_exts[i])
 	}
 	when ENABLE_VALIDATION {
@@ -85,13 +87,13 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	}
 
 	instance_info := vk.InstanceCreateInfo {
-		sType = .INSTANCE_CREATE_INFO,
-		pApplicationInfo = &app_info,
-		enabledExtensionCount = u32(len(extensions)),
+		sType                   = .INSTANCE_CREATE_INFO,
+		pApplicationInfo        = &app_info,
+		enabledExtensionCount   = u32(len(extensions)),
 		ppEnabledExtensionNames = raw_data(extensions),
 	}
 	when ENABLE_VALIDATION {
-		instance_info.enabledLayerCount   = u32(len(VALIDATION_LAYERS))
+		instance_info.enabledLayerCount = u32(len(VALIDATION_LAYERS))
 		instance_info.ppEnabledLayerNames = raw_data(VALIDATION_LAYERS)
 	}
 	if vk.CreateInstance(&instance_info, nil, &ctx.instance) != .SUCCESS {
@@ -117,7 +119,7 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 			ctx.device = pd
 			ctx.graphics_family = gfx
 			ctx.present_family = pres
-			break 
+			break
 		}
 	}
 
@@ -130,17 +132,17 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	queue_infos: [2]vk.DeviceQueueCreateInfo
 	priority: f32 = 1.0
 	n_unique := 1 if ctx.graphics_family == ctx.present_family else 2
-	for i in 0..<n_unique {
+	for i in 0 ..< n_unique {
 		queue_infos[i] = {
-			sType = .DEVICE_QUEUE_CREATE_INFO,
+			sType            = .DEVICE_QUEUE_CREATE_INFO,
 			queueFamilyIndex = unqiue_families[i],
-			queueCount = 1,
+			queueCount       = 1,
 			pQueuePriorities = &priority,
 		}
 	}
 
 	features := vk.PhysicalDeviceFeatures{}
-	dev_info := vk.DeviceCreateInfo{
+	dev_info := vk.DeviceCreateInfo {
 		sType                   = .DEVICE_CREATE_INFO,
 		queueCreateInfoCount    = u32(n_unique),
 		pQueueCreateInfos       = &queue_infos[0],
@@ -160,7 +162,7 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	vk.load_proc_addresses_device(ctx.logical_device)
 
 	vk.GetDeviceQueue(ctx.logical_device, ctx.graphics_family, 0, &ctx.graphics_queue)
-	vk.GetDeviceQueue(ctx.logical_device, ctx.present_family,  0, &ctx.present_queue)
+	vk.GetDeviceQueue(ctx.logical_device, ctx.present_family, 0, &ctx.present_queue)
 
 	//
 	// Swapchain
@@ -182,9 +184,9 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	//
 	if !_create_framebuffers(ctx) do return false
 
-	pool_info := vk.CommandPoolCreateInfo{
-		sType = .COMMAND_POOL_CREATE_INFO,
-		flags = {.RESET_COMMAND_BUFFER},
+	pool_info := vk.CommandPoolCreateInfo {
+		sType            = .COMMAND_POOL_CREATE_INFO,
+		flags            = {.RESET_COMMAND_BUFFER},
 		queueFamilyIndex = ctx.graphics_family,
 	}
 	if vk.CreateCommandPool(ctx.logical_device, &pool_info, nil, &ctx.cmd_pool) != .SUCCESS {
@@ -192,21 +194,27 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 	}
 
 	ctx.cmd_buffers = make([]vk.CommandBuffer, len(ctx.framebuffers))
-	alloc_info := vk.CommandBufferAllocateInfo{
+	alloc_info := vk.CommandBufferAllocateInfo {
 		sType              = .COMMAND_BUFFER_ALLOCATE_INFO,
 		commandPool        = ctx.cmd_pool,
 		level              = .PRIMARY,
 		commandBufferCount = u32(len(ctx.cmd_buffers)),
 	}
-	if vk.AllocateCommandBuffers(ctx.logical_device, &alloc_info, raw_data(ctx.cmd_buffers)) != .SUCCESS {
+	if vk.AllocateCommandBuffers(ctx.logical_device, &alloc_info, raw_data(ctx.cmd_buffers)) !=
+	   .SUCCESS {
 		return false
 	}
 
 	//
 	// Sync objects
 	//
-	sem_info   := vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO}
-	fence_info := vk.FenceCreateInfo{sType = .FENCE_CREATE_INFO, flags = {.SIGNALED}}
+	sem_info := vk.SemaphoreCreateInfo {
+		sType = .SEMAPHORE_CREATE_INFO,
+	}
+	fence_info := vk.FenceCreateInfo {
+		sType = .FENCE_CREATE_INFO,
+		flags = {.SIGNALED},
+	}
 	if vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.img_available) != .SUCCESS {
 		return false
 	}
@@ -217,8 +225,8 @@ vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u3
 
 	if !pipeline_create(ctx) do return false
 
-        if !ui_init(ctx) do return false
-    
+	if !ui_init(ctx) do return false
+
 	return true
 }
 
@@ -227,11 +235,17 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	if ctx.swapchain_needs_rebuild && !_try_rebuild_swapchain(ctx) do return
 
 	vk.WaitForFences(ctx.logical_device, 1, &ctx.in_flight, true, max(u64))
-	
+
 
 	img_idx: u32
-	result := vk.AcquireNextImageKHR(ctx.logical_device, ctx.swap_chain, max(u64),
-	                       ctx.img_available, 0, &img_idx)
+	result := vk.AcquireNextImageKHR(
+		ctx.logical_device,
+		ctx.swap_chain,
+		max(u64),
+		ctx.img_available,
+		0,
+		&img_idx,
+	)
 	if result == .ERROR_OUT_OF_DATE_KHR {
 		ctx.swapchain_needs_rebuild = true
 		return
@@ -248,41 +262,44 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	cb := ctx.cmd_buffers[img_idx]
 	vk.ResetCommandBuffer(cb, {})
 
-	begin_info := vk.CommandBufferBeginInfo{sType = .COMMAND_BUFFER_BEGIN_INFO}
+	begin_info := vk.CommandBufferBeginInfo {
+		sType = .COMMAND_BUFFER_BEGIN_INFO,
+	}
 	vk.BeginCommandBuffer(cb, &begin_info)
 
-	clear_color := vk.ClearValue{color = {float32 = {1.0, 0.0, 1.0, 1.0}}} 
-	rp_begin := vk.RenderPassBeginInfo{
-		sType           = .RENDER_PASS_BEGIN_INFO,
-		renderPass      = ctx.render_pass,
-		framebuffer     = ctx.framebuffers[img_idx],
-		renderArea      = {extent = ctx.swap_extent},
+	clear_color := vk.ClearValue {
+		color = {float32 = {1.0, 0.0, 1.0, 1.0}},
+	}
+	rp_begin := vk.RenderPassBeginInfo {
+		sType = .RENDER_PASS_BEGIN_INFO,
+		renderPass = ctx.render_pass,
+		framebuffer = ctx.framebuffers[img_idx],
+		renderArea = {extent = ctx.swap_extent},
 		clearValueCount = 1,
-		pClearValues    = &clear_color,
+		pClearValues = &clear_color,
 	}
 	vk.CmdBeginRenderPass(cb, &rp_begin, .INLINE)
+
+	// full viewport
+	full_viewport := vk.Viewport {
+		x        = 0,
+		y        = 0,
+		width    = f32(ctx.swap_extent.width),
+		height   = f32(ctx.swap_extent.height),
+		minDepth = 0,
+		maxDepth = 1,
+	}
+
+	full_scissor := vk.Rect2D {
+		extent = ctx.swap_extent,
+	}
+	vk.CmdSetViewport(cb, 0, 1, &full_viewport)
+	vk.CmdSetScissor(cb, 0, 1, &full_scissor)
 
 	//
 	// ── draw calls go here (UI pass, text pass, etc.) ──
 	//
 	for view in views {
-		// Viewport: maps NDC [-1, 1] into this region of the framebuffer
-		viewport := vk.Viewport {
-			x = view.rect.x,
-			y = view.rect.y,
-			width = view.rect.w,
-			height = view.rect.h,
-			minDepth = 0.0,
-			maxDepth = 1.0,
-		}
-		vk.CmdSetViewport(cb, 0, 1, &viewport)
-
-		scissor := vk.Rect2D {
-			offset = {i32(view.rect.x), i32(view.rect.y)},
-			extent = {u32(view.rect.w), u32(view.rect.h)},
-		}
-		vk.CmdSetScissor(cb, 0, 1, &scissor)
-
 		switch view.type {
 		case .Editor:
 			_render_editor(cb, ctx)
@@ -295,7 +312,7 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 	vk.EndCommandBuffer(cb)
 
 	wait_stage := vk.PipelineStageFlags{.COLOR_ATTACHMENT_OUTPUT}
-	submit := vk.SubmitInfo{
+	submit := vk.SubmitInfo {
 		sType                = .SUBMIT_INFO,
 		waitSemaphoreCount   = 1,
 		pWaitSemaphores      = &ctx.img_available,
@@ -311,7 +328,7 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 		return
 	}
 
-	present := vk.PresentInfoKHR{
+	present := vk.PresentInfoKHR {
 		sType              = .PRESENT_INFO_KHR,
 		waitSemaphoreCount = 1,
 		pWaitSemaphores    = &ctx.render_finished[img_idx],
@@ -332,7 +349,8 @@ vk_ctx_render :: proc(ctx: ^Vulkan_Context, views: []View) {
 vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 	vk.DeviceWaitIdle(ctx.logical_device)
 
-        ui_destroy(ctx)
+
+	ui_destroy(ctx)
 	pipeline_destroy(ctx)
 
 	if ctx.img_available != 0 {
@@ -350,12 +368,12 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 		ctx.cmd_pool = 0
 	}
 
-	for fb in ctx.framebuffers  do vk.DestroyFramebuffer(ctx.logical_device, fb, nil)
+	for fb in ctx.framebuffers do vk.DestroyFramebuffer(ctx.logical_device, fb, nil)
 	if ctx.render_pass != 0 {
 		vk.DestroyRenderPass(ctx.logical_device, ctx.render_pass, nil)
 		ctx.render_pass = 0
 	}
-	for iv in ctx.image_views   do vk.DestroyImageView(ctx.logical_device, iv, nil)
+	for iv in ctx.image_views do vk.DestroyImageView(ctx.logical_device, iv, nil)
 	if ctx.swap_chain != 0 {
 		vk.DestroySwapchainKHR(ctx.logical_device, ctx.swap_chain, nil)
 		ctx.swap_chain = 0
@@ -375,15 +393,18 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 		ctx.surface = 0
 	}
 	when ENABLE_VALIDATION {
-            if ctx.debug_messenger != 0 {
-		destroy_fn := cast(vk.ProcDestroyDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(ctx.instance, "vkDestroyDebugUtilsMessengerEXT")
-		if destroy_fn != nil {
-                    destroy_fn(ctx.instance, ctx.debug_messenger, nil)
+		if ctx.debug_messenger != 0 {
+			destroy_fn := cast(vk.ProcDestroyDebugUtilsMessengerEXT)vk.GetInstanceProcAddr(
+				ctx.instance,
+				"vkDestroyDebugUtilsMessengerEXT",
+			)
+			if destroy_fn != nil {
+				destroy_fn(ctx.instance, ctx.debug_messenger, nil)
+			}
+			ctx.debug_messenger = 0
 		}
-		ctx.debug_messenger = 0
-            }
 	}
-    
+
 
 	vk.DestroyDevice(ctx.logical_device, nil)
 	vk.DestroyInstance(ctx.instance, nil)
@@ -394,7 +415,7 @@ vk_ctx_destroy :: proc(ctx: ^Vulkan_Context) {
 renderer_rebuild_swapchain :: proc(r: ^Renderer, width, height: u32) {
 	switch d in r.backend_data {
 	case ^Vulkan_Context:
-		r.width  = i32(width)
+		r.width = i32(width)
 		r.height = i32(height)
 		d.swapchain_needs_rebuild = true
 	}
@@ -405,8 +426,14 @@ renderer_rebuild_swapchain :: proc(r: ^Renderer, width, height: u32) {
 //
 
 @(private)
-_find_queue_families :: proc(pd: vk.PhysicalDevice, surface: vk.SurfaceKHR) -> (gfx, pres: u32, ok: bool) {
-	count: u32 
+_find_queue_families :: proc(
+	pd: vk.PhysicalDevice,
+	surface: vk.SurfaceKHR,
+) -> (
+	gfx, pres: u32,
+	ok: bool,
+) {
+	count: u32
 	vk.GetPhysicalDeviceQueueFamilyProperties(pd, &count, nil)
 	families := make([]vk.QueueFamilyProperties, count)
 	defer delete(families)
@@ -422,7 +449,7 @@ _find_queue_families :: proc(pd: vk.PhysicalDevice, surface: vk.SurfaceKHR) -> (
 		support: b32
 		vk.GetPhysicalDeviceSurfaceSupportKHR(pd, idx, surface, &support)
 		if support {
-			pres = idx 
+			pres = idx
 			pres_found = true
 		}
 		if gfx_found && pres_found {
@@ -434,7 +461,11 @@ _find_queue_families :: proc(pd: vk.PhysicalDevice, surface: vk.SurfaceKHR) -> (
 }
 
 @(private)
-_create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32, old_swapchain: vk.SwapchainKHR = 0) -> bool {
+_create_swapchain :: proc(
+	ctx: ^Vulkan_Context,
+	width, height: u32,
+	old_swapchain: vk.SwapchainKHR = 0,
+) -> bool {
 	caps: vk.SurfaceCapabilitiesKHR
 	vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.device, ctx.surface, &caps)
 
@@ -458,19 +489,24 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32, old_swapchai
 	vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.device, ctx.surface, &pm_count, nil)
 	pmodes := make([]vk.PresentModeKHR, pm_count)
 	defer delete(pmodes)
-	vk.GetPhysicalDeviceSurfacePresentModesKHR(ctx.device, ctx.surface, &pm_count, raw_data(pmodes))
+	vk.GetPhysicalDeviceSurfacePresentModesKHR(
+		ctx.device,
+		ctx.surface,
+		&pm_count,
+		raw_data(pmodes),
+	)
 
 	chosen_pm := vk.PresentModeKHR.FIFO
 	for pm in pmodes {
-		if pm == .MAILBOX { chosen_pm = pm; break }
+		if pm == .MAILBOX {chosen_pm = pm; break}
 	}
 
 	extent: vk.Extent2D
 	if caps.currentExtent.width != max(u32) {
 		extent = caps.currentExtent
 	} else {
-		extent = vk.Extent2D{
-			width  = clamp(width,  caps.minImageExtent.width,  caps.maxImageExtent.width),
+		extent = vk.Extent2D {
+			width  = clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width),
 			height = clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height),
 		}
 	}
@@ -481,7 +517,7 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32, old_swapchai
 	}
 
 	queue_indices := [2]u32{ctx.graphics_family, ctx.present_family}
-	sc_info := vk.SwapchainCreateInfoKHR{
+	sc_info := vk.SwapchainCreateInfoKHR {
 		sType            = .SWAPCHAIN_CREATE_INFO_KHR,
 		surface          = ctx.surface,
 		minImageCount    = img_count,
@@ -496,9 +532,9 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32, old_swapchai
 		clipped          = true,
 	}
 	if ctx.graphics_family != ctx.present_family {
-		sc_info.imageSharingMode      = .CONCURRENT
+		sc_info.imageSharingMode = .CONCURRENT
 		sc_info.queueFamilyIndexCount = 2
-		sc_info.pQueueFamilyIndices   = &queue_indices[0]
+		sc_info.pQueueFamilyIndices = &queue_indices[0]
 	} else {
 		sc_info.imageSharingMode = .EXCLUSIVE
 	}
@@ -512,7 +548,12 @@ _create_swapchain :: proc(ctx: ^Vulkan_Context, width, height: u32, old_swapchai
 
 	vk.GetSwapchainImagesKHR(ctx.logical_device, ctx.swap_chain, &img_count, nil)
 	ctx.swap_images = make([]vk.Image, img_count)
-	vk.GetSwapchainImagesKHR(ctx.logical_device, ctx.swap_chain, &img_count, raw_data(ctx.swap_images))
+	vk.GetSwapchainImagesKHR(
+		ctx.logical_device,
+		ctx.swap_chain,
+		&img_count,
+		raw_data(ctx.swap_images),
+	)
 
 	ctx.swap_format = chosen_fmt.format
 	ctx.swap_extent = extent
@@ -532,9 +573,12 @@ _destroy_render_finished_semaphores :: proc(ctx: ^Vulkan_Context) {
 _create_render_finished_semaphores :: proc(ctx: ^Vulkan_Context) -> bool {
 	_destroy_render_finished_semaphores(ctx)
 	ctx.render_finished = make([]vk.Semaphore, len(ctx.framebuffers))
-	sem_info := vk.SemaphoreCreateInfo{sType = .SEMAPHORE_CREATE_INFO}
-	for i in 0..<len(ctx.render_finished) {
-		if vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.render_finished[i]) != .SUCCESS {
+	sem_info := vk.SemaphoreCreateInfo {
+		sType = .SEMAPHORE_CREATE_INFO,
+	}
+	for i in 0 ..< len(ctx.render_finished) {
+		if vk.CreateSemaphore(ctx.logical_device, &sem_info, nil, &ctx.render_finished[i]) !=
+		   .SUCCESS {
 			_destroy_render_finished_semaphores(ctx)
 			return false
 		}
@@ -554,32 +598,28 @@ _try_rebuild_swapchain :: proc(ctx: ^Vulkan_Context) -> bool {
 
 @(private)
 _vk_debug_callback :: proc "system" (
-    severity: vk.DebugUtilsMessageSeverityFlagsEXT,
-    type:     vk.DebugUtilsMessageTypeFlagsEXT,
-    data:     ^vk.DebugUtilsMessengerCallbackDataEXT,
-    user_data: rawptr,
+	severity: vk.DebugUtilsMessageSeverityFlagsEXT,
+	type: vk.DebugUtilsMessageTypeFlagsEXT,
+	data: ^vk.DebugUtilsMessengerCallbackDataEXT,
+	user_data: rawptr,
 ) -> b32 {
-    context = runtime.default_context() 
-    
-    fmt.eprintfln("[%v] %s", severity, data.pMessage)
-    
-    return false 
+	context = runtime.default_context()
+
+	fmt.eprintfln("[%v] %s", severity, data.pMessage)
+
+	return false
 }
 
 @(private)
 _create_image_views :: proc(ctx: ^Vulkan_Context) -> bool {
 	ctx.image_views = make([]vk.ImageView, len(ctx.swap_images))
 	for img, i in ctx.swap_images {
-		iv_info := vk.ImageViewCreateInfo{
-			sType    = .IMAGE_VIEW_CREATE_INFO,
-			image    = img,
+		iv_info := vk.ImageViewCreateInfo {
+			sType = .IMAGE_VIEW_CREATE_INFO,
+			image = img,
 			viewType = .D2,
-			format   = ctx.swap_format,
-			subresourceRange = {
-				aspectMask = {.COLOR},
-				levelCount  = 1,
-				layerCount  = 1,
-			},
+			format = ctx.swap_format,
+			subresourceRange = {aspectMask = {.COLOR}, levelCount = 1, layerCount = 1},
 		}
 		if vk.CreateImageView(ctx.logical_device, &iv_info, nil, &ctx.image_views[i]) != .SUCCESS {
 			return false
@@ -590,7 +630,7 @@ _create_image_views :: proc(ctx: ^Vulkan_Context) -> bool {
 
 @(private)
 _create_render_pass :: proc(ctx: ^Vulkan_Context) -> bool {
-	color_attach := vk.AttachmentDescription{
+	color_attach := vk.AttachmentDescription {
 		format         = ctx.swap_format,
 		samples        = {._1},
 		loadOp         = .CLEAR,
@@ -600,19 +640,22 @@ _create_render_pass :: proc(ctx: ^Vulkan_Context) -> bool {
 		initialLayout  = .UNDEFINED,
 		finalLayout    = .PRESENT_SRC_KHR,
 	}
-	color_ref := vk.AttachmentReference{attachment = 0, layout = .COLOR_ATTACHMENT_OPTIMAL}
-	subpass := vk.SubpassDescription{
+	color_ref := vk.AttachmentReference {
+		attachment = 0,
+		layout     = .COLOR_ATTACHMENT_OPTIMAL,
+	}
+	subpass := vk.SubpassDescription {
 		pipelineBindPoint    = .GRAPHICS,
 		colorAttachmentCount = 1,
 		pColorAttachments    = &color_ref,
 	}
-	dependency := vk.SubpassDependency{
+	dependency := vk.SubpassDependency {
 		srcSubpass    = vk.SUBPASS_EXTERNAL,
 		srcStageMask  = {.COLOR_ATTACHMENT_OUTPUT},
 		dstStageMask  = {.COLOR_ATTACHMENT_OUTPUT},
 		dstAccessMask = {.COLOR_ATTACHMENT_WRITE},
 	}
-	rp_info := vk.RenderPassCreateInfo{
+	rp_info := vk.RenderPassCreateInfo {
 		sType           = .RENDER_PASS_CREATE_INFO,
 		attachmentCount = 1,
 		pAttachments    = &color_attach,
@@ -628,7 +671,7 @@ _create_render_pass :: proc(ctx: ^Vulkan_Context) -> bool {
 _create_framebuffers :: proc(ctx: ^Vulkan_Context) -> bool {
 	ctx.framebuffers = make([]vk.Framebuffer, len(ctx.image_views))
 	for &iv, i in ctx.image_views {
-		fb_info := vk.FramebufferCreateInfo{
+		fb_info := vk.FramebufferCreateInfo {
 			sType           = .FRAMEBUFFER_CREATE_INFO,
 			renderPass      = ctx.render_pass,
 			attachmentCount = 1,
@@ -637,7 +680,8 @@ _create_framebuffers :: proc(ctx: ^Vulkan_Context) -> bool {
 			height          = ctx.swap_extent.height,
 			layers          = 1,
 		}
-		if vk.CreateFramebuffer(ctx.logical_device, &fb_info, nil, &ctx.framebuffers[i]) != .SUCCESS {
+		if vk.CreateFramebuffer(ctx.logical_device, &fb_info, nil, &ctx.framebuffers[i]) !=
+		   .SUCCESS {
 			return false
 		}
 	}
@@ -646,15 +690,21 @@ _create_framebuffers :: proc(ctx: ^Vulkan_Context) -> bool {
 
 @(private)
 _render_editor :: proc(cb: vk.CommandBuffer, ctx: ^Vulkan_Context) {
-	color := Push_Constants{color = VIEW_COLORS[.Editor]}
+	ui_render_list(ctx, cb, &ctx.ui_system.render_list) 
+
+	color := Push_Constants {
+		color = VIEW_COLORS[.Editor],
+	}
 	vk.CmdBindPipeline(cb, .GRAPHICS, ctx.pipeline)
 	vk.CmdPushConstants(cb, ctx.pipeline_layout, {.FRAGMENT}, 0, size_of(Push_Constants), &color)
-	vk.CmdDraw(cb, 4, 1, 0, 0) 
+	vk.CmdDraw(cb, 4, 1, 0, 0)
 }
 
-@(private) 
+@(private)
 _render_codex :: proc(cb: vk.CommandBuffer, ctx: ^Vulkan_Context) {
-	color := Push_Constants{color = VIEW_COLORS[.Codex]}
+	color := Push_Constants {
+		color = VIEW_COLORS[.Codex],
+	}
 	vk.CmdBindPipeline(cb, .GRAPHICS, ctx.pipeline)
 	vk.CmdPushConstants(cb, ctx.pipeline_layout, {.FRAGMENT}, 0, size_of(Push_Constants), &color)
 	vk.CmdDraw(cb, 4, 1, 0, 0)

@@ -69,6 +69,10 @@ main :: proc() {
 			}
 		}
 
+		ui_system := renderer.ui_system
+		mouse := engine.input_to_mouse(&inp)
+		engine.ui_begin(ui_system, WINDOW_WIDTH, WINDOW_HEIGHT, mouse)
 		engine.renderer_render(renderer, layout.views[:])
+		engine.ui_end(ui_system)
 	}
 }

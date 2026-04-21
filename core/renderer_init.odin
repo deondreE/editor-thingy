@@ -14,6 +14,7 @@ Renderer :: struct {
 	backend:      Renderer_Backend,
 	backend_data: Backend_Data,
 	width, height: i32,
+	ui_system: ^Ui_System,
 }
 
 renderer_init :: proc(
@@ -37,11 +38,13 @@ renderer_init :: proc(
 	r.width = w
 	r.height = h
 
+	r.ui_system = ui_system_create()
+
 	switch backend { 
 	case .Vulkan:
 		ctx := new(Vulkan_Context)
 		// vk_ctx_init already handles surface creation via SDL3 internally
-		if !vk_ctx_init(ctx, window, u32(w), u32(h)) {
+		if !vk_ctx_init(ctx, window, u32(w), u32(h), r.ui_system) {
 			fmt.eprintln("renderer_init: vk_ctx_init failed")
 			free(ctx)
 			free(r)
@@ -88,6 +91,8 @@ renderer_shutdown :: proc(r: ^Renderer) {
 		vk_ctx_destroy(d)
 		free(d)
 	}
+
+	ui_system_destroy(r.ui_system)
 
 	free(r)
 }

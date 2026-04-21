@@ -103,6 +103,17 @@ input_key_pressed    :: #force_inline proc(inp: ^Input, key: Key)          -> bo
 input_key_down       :: #force_inline proc(inp: ^Input, key: Key)          -> bool { return inp.keys_down[key]      }
 input_mod            :: #force_inline proc(inp: ^Input, mod: Mod)          -> bool { return mod in inp.mods         }
 
+input_to_mouse :: proc(inp: ^Input) -> Mouse_State {
+    return Mouse_State {
+        x = inp.mouse_pos.x,
+        y = inp.mouse_pos.y,
+        left_pressed = inp.mouse_pressed[.Left],
+        left_held = inp.mouse_down[.Left],
+        right_pressed = inp.mouse_pressed[.Right],
+        right_held = inp.mouse_down[.Right],
+    }
+}
+
 @private
 sdl_mouse_button :: proc(btn: u8) -> (Mouse_Button, bool) {
     switch btn {

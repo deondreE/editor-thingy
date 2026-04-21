@@ -48,8 +48,10 @@ Widget :: struct {
 
 Mouse_State :: struct {
 	x, y:       f32,
-	left_down:  bool,
-	right_down: bool,
+	left_pressed: bool,
+	left_held: bool,
+	right_pressed: bool,
+	right_held: bool,
 }
 
 // Refers to the general ui system
@@ -317,6 +319,7 @@ frame_reset :: proc(f: ^Frame) {
 // Font
 //
 
+// @Todo redo with freetype.
 // call once with ttf file bytes -- returns a Font ready for upload
 font_init :: proc(font: ^Font, ttf_data: []u8, size_px: f32) -> bool {
 	font.size_px = size_px
@@ -449,14 +452,14 @@ ui_begin :: proc(ui: ^Ui_System, screen_w, screen_h: f32, mouse: Mouse_State) {
 	ui.root.style = {}
 }
 
-ui_end :: proc(ui: ^Ui_System, font: ^Font) {
+ui_end :: proc(ui: ^Ui_System) {
 	_layout_measure(ui.root)
 	_layout_place(ui.root, 0, 0)
 	_hit_test(ui, ui.root)
-	_draw_widget(ui, ui.root, font)
+	// _draw_widget(ui, ui.root, font)
 	flush(&ui.frame, &ui.render_list)
 
-	if !ui.mouse.left_down do ui.active = 0
+	if !ui.mouse.left_held do ui.active = 0
 }
 
 // General Layout constructors
@@ -656,12 +659,11 @@ _hit_test :: proc(ui: ^Ui_System, w: ^Widget) {
 	if mx >= r.x && mx < r.x + r.z && my >= r.y && my < r.y + r.w {
 		ui.hot = w.id
 		w.hovered = true
-		if ui.mouse.left_down {
+		if ui.mouse.left_pressed {
 			ui.active = w.id
 			w.pressed = true
 		}
-		// @Todo: this should be left hold :)
-		w.held = ui.active == w.id && ui.mouse.left_down
+		w.held = ui.active == w.id && ui.mouse.left_held
 	}
 	for child in w.children {
 		_hit_test(ui, child)
