@@ -1,4 +1,4 @@
-#+build windows, linux
+#+build linux
 package core
 
 import "base:runtime"
@@ -43,10 +43,6 @@ VALIDATION_LAYERS := []cstring{"VK_LAYER_KHRONOS_validation"}
 DEVICE_EXTENSIONS := []cstring{vk.KHR_SWAPCHAIN_EXTENSION_NAME}
 
 ENABLE_VALIDATION :: true
-
-Backend_Data :: union {
-	^Vulkan_Context,
-}
 
 vk_ctx_init :: proc(ctx: ^Vulkan_Context, window: ^sdl.Window, width, height: u32, ui_system: ^Ui_System) -> bool {
 	ctx.window = window

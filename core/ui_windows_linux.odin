@@ -1,4 +1,4 @@
-#+build windows, linux
+#+build linux
 package core
 
 import "core:fmt"
@@ -189,54 +189,43 @@ ui_font_upload :: proc(ctx: ^Vulkan_Context, font: ^Font) -> bool {
 
 // This is called once per frame inside vk_render
 ui_render_list :: proc(ctx: ^Vulkan_Context, cb: vk.CommandBuffer, rl: ^Render_List) {
-	ui := ctx.ui
-	if ui == nil || len(rl.draw_calls) == 0 do return
+    ui := ctx.ui
+    if ui == nil || len(rl.draw_calls) == 0 do return
 
-	n_v := len(rl.vertices)
-	n_i := len(rl.indices)
-	if n_v == 0 || n_i == 0 do return
+    n_v := len(rl.vertices)
+    n_i := len(rl.indices)
+    if n_v == 0 || n_i == 0 do return
 
-	v_bytes := n_v * size_of(Vertex)
-	i_bytes := n_i * size_of(u32)
-	assert(n_v <= ui.max_vertices, "vertex buffer overflow")
-	assert(n_i <= ui.max_indices, "index buffer overflow")
+    assert(n_v <= ui.max_vertices, "vertex buffer overflow")
+    assert(n_i <= ui.max_indices,  "index buffer overflow")
 
-	mem.copy(ui.vbo_ptr, raw_data(rl.vertices), v_bytes)
-	mem.copy(ui.ibo_ptr, raw_data(rl.indices), i_bytes)
+    mem.copy(ui.vbo_ptr, raw_data(rl.vertices), n_v * size_of(Vertex))
+    mem.copy(ui.ibo_ptr, raw_data(rl.indices),  n_i * size_of(u32))
 
-	vk.CmdBindPipeline(cb, .GRAPHICS, ui.pipeline)
+    vk.CmdBindPipeline(cb, .GRAPHICS, ui.pipeline)
 
-	w := f32(ctx.swap_extent.width)
-	h := f32(ctx.swap_extent.height)
-	ortho := _ortho2d(0, w, 0, h)
-	vk.CmdPushConstants(cb, ui.pipeline_layout, {.VERTEX}, 0, size_of(ortho), &ortho)
+    w := f32(ctx.swap_extent.width)
+    h := f32(ctx.swap_extent.height)
+    ortho := _ortho2d(0, w, 0, h)
+    vk.CmdPushConstants(cb, ui.pipeline_layout, {.VERTEX}, 0, size_of(ortho), &ortho)
 
-	vbo_offset := vk.DeviceSize(0)
-	vk.CmdBindVertexBuffers(cb, 0, 1, &ui.vbo, &vbo_offset)
-	vk.CmdBindIndexBuffer(cb, ui.ibo, 0, .UINT32)
+    vbo_offset := vk.DeviceSize(0)
+    vk.CmdBindVertexBuffers(cb, 0, 1, &ui.vbo, &vbo_offset)
+    vk.CmdBindIndexBuffer(cb, ui.ibo, 0, .UINT32)
 
-	for dc in rl.draw_calls {
-		scissor := vk.Rect2D {
-			offset = {i32(dc.clip_rect.x), i32(dc.clip_rect.y)},
-			extent = {u32(dc.clip_rect.z), u32(dc.clip_rect.w)},
-		}
-		vk.CmdSetScissor(cb, 0, 1, &scissor)
+    if ui.font_desc_set != 0 {
+        vk.CmdBindDescriptorSets(cb, .GRAPHICS, ui.pipeline_layout,
+            0, 1, &ui.font_desc_set, 0, nil)
+    }
 
-		if dc.texture_id != 0 && ui.font_desc_set != 0 {
-			vk.CmdBindDescriptorSets(
-				cb,
-				.GRAPHICS,
-				ui.pipeline_layout,
-				0,
-				1,
-				&ui.font_desc_set,
-				0,
-				nil,
-			)
-		}
-
-		vk.CmdDrawIndexed(cb, dc.index_count, 1, dc.index_offset, 0, 0)
-	}
+    for dc in rl.draw_calls {
+        scissor := vk.Rect2D{
+            offset = {i32(dc.clip_rect.x), i32(dc.clip_rect.y)},
+            extent = {u32(dc.clip_rect.z), u32(dc.clip_rect.w)},
+        }
+        vk.CmdSetScissor(cb, 0, 1, &scissor)
+        vk.CmdDrawIndexed(cb, dc.index_count, 1, dc.index_offset, 0, 0)
+    }
 }
 
 @(private)

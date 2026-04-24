@@ -27,6 +27,8 @@ main :: proc() {
 	backend: engine.Renderer_Backend
 	when ODIN_OS == .Darwin {
 		backend = .Metal
+	} if ODIN_OS == .Windows {
+		backend = .DirectX12
 	} else {
 		backend = .Vulkan
 	}
@@ -62,7 +64,8 @@ main :: proc() {
 				w, h: i32
 				sdl.GetWindowSizeInPixels(window, &w, &h)
 				engine.layout_resize(&layout, f32(w), f32(h))
-				engine.renderer_rebuild_swapchain(renderer, u32(w), u32(h))
+				// @Todo: Make a general platform agnostic call for this.
+				//engine.renderer_rebuild_swapchain(renderer, u32(w), u32(h))
 			}
 		}
 

@@ -55,6 +55,16 @@ renderer_init :: proc(
 
 	case .DirectX12:
 		when ODIN_OS == .Windows {
+			ctx := new(DxContext)
+
+			if !dx_init(ctx, f32(w), f32(h)) {
+				fmt.eprintln("renderer_init: dx_init failed")
+				free(ctx)
+				free(r)
+				return nil, false
+			}	
+
+			r.backend_data = ctx
 			// Initialize DX12 and assign to r.backend_data
 		} else {
 			fmt.eprintln("renderer_init: DirectX12 only supported on Windows")
@@ -77,18 +87,25 @@ renderer_init :: proc(
 renderer_render :: proc(r: ^Renderer, views: []View) {
 	if r == nil do return
 	
-	switch d in r.backend_data {
+	#partial switch d in r.backend_data {
 	case ^Vulkan_Context:
 		vk_ctx_render(d, views)
+	case ^DxContext:
+		when ODIN_OS == .Windows {
+			dx_render(d, views)
+		}
 	}
 }
 
 renderer_shutdown :: proc(r: ^Renderer) {
 	if r == nil do return
 
-	switch d in r.backend_data {
+	#partial switch d in r.backend_data {
 	case ^Vulkan_Context:
 		vk_ctx_destroy(d)
+		free(d)
+	case ^DxContext:
+		dx_destroy(d)
 		free(d)
 	}
 

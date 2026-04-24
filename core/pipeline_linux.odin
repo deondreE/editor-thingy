@@ -1,4 +1,4 @@
-#+build windows, linux
+#+build linux
 package core
 
 import vk "vendor:vulkan"
