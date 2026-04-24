@@ -2,17 +2,6 @@ package core
 
 import "core:hash"
 import "core:mem"
-import stbtt "vendor:stb/truetype"
-
-MAX_GLYPHS :: 256
-ATLAS_SIZE :: 512
-
-Glyph_Info :: struct {
-	uv:      [4]f32,
-	offset:  [2]f32,
-	size:    [2]f32,
-	advance: f32,
-}
 
 Size_Kind :: enum {
 	Fixed,
@@ -74,24 +63,13 @@ UI_SYSTEM_ARENA_SIZE :: 4 * 1024 * 1024 // 4mb should be enough for now.
 
 // The style of the `high-level` widget in this case.
 Style :: struct {
-	font:         ^Font,
+	font:         ^FontDef,
 	bg_color:     [4]u8,
 	fg_color:     [4]u8,
 	text_color:   [4]u8,
 	border_color: [4]u8,
 	padding:      f32,
 	rounding:     f32,
-}
-
-Font :: struct {
-	glyphs:     [MAX_GLYPHS]Glyph_Info,
-	atlas:      []u8, // ATLAS_SIZE*ATLAS_SIZE single-channel bitmap
-	atlas_size: int,
-	texture_id: u32, // assigned by backend after upload
-	size_px:    f32,
-	ascent:     f32,
-	descent:    f32,
-	line_gap:   f32,
 }
 
 Text_Align :: enum {
@@ -173,46 +151,15 @@ draw_image :: proc(
 	append(&f.cmds, Cmd_Quad{{x, y, w, h}, uvs, texture_id, tint})
 }
 
-draw_glyph :: proc(f: ^Frame, font: ^Font, ch: rune, x, y: f32, col: [4]u8) -> f32 {
-	// append(&f.cmds, Cmd_Quad{{x, y, w, h}, uvs, atlas, col})
-	idx := int(ch)
-	if idx < 0 || idx >= MAX_GLYPHS do return 0
-
-	g := font.glyphs[idx]
-	if g.size.x == 0 do return g.advance
-
-	gx := x + g.offset.x
-	gy := y + g.offset.y + font.ascent
-
-	append(
-		&f.cmds,
-		Cmd_Quad {
-			rect = {gx, gy, g.size.x, g.size.y},
-			uvs = g.uv,
-			texture_id = font.texture_id,
-			col = col,
-		},
-	)
-	return g.advance
-}
-
-draw_text :: proc(f: ^Frame, font: ^Font, text: string, x, y: f32, col: [4]u8) -> f32 {
-	cx := x
-	for ch in text {
-		cx += draw_glyph(f, font, ch, cx, y, col)
-	}
-	return cx - x
-}
-
-draw_text_aligned :: proc(
+_aligned :: proc(
 	f: ^Frame,
-	font: ^Font,
+	font: ^FontDef,
 	text: string,
 	x, y, w: f32,
 	col: [4]u8,
 	align: Text_Align,
 ) {
-	text_width := measure_text(font, text)
+	text_width := font_measure(font, text)
 	render_x := x
 
 	switch align {
@@ -223,21 +170,10 @@ draw_text_aligned :: proc(
 	case .Right:
 		render_x = x + w - text_width
 	}
-
-	draw_text(f, font, text, render_x, y, col)
 }
 
-measure_text :: proc(font: ^Font, text: string) -> f32 {
-	w: f32
-	for ch in text {
-		idx := int(ch)
-		if idx >= 0 && idx < MAX_GLYPHS do w += font.glyphs[idx].advance
-	}
-	return w
-}
-
-line_height :: proc(font: ^Font) -> f32 {
-	return font.ascent - font.descent + font.line_gap
+line_height :: proc(font: ^FontDef) -> f32 {
+	return font.ascent
 }
 
 push_clip :: proc(f: ^Frame, x, y, w, h: f32) {
@@ -315,81 +251,6 @@ frame_reset :: proc(f: ^Frame) {
 	clear(&f.clip_stack)
 }
 
-//
-// Font
-//
-
-// call once with ttf file bytes -- returns a Font ready for upload
-font_init :: proc(font: ^Font, ttf_data: []u8, size_px: f32) -> bool {
-    font.size_px    = size_px
-    font.atlas_size = ATLAS_SIZE
-    font.atlas      = make([]u8, ATLAS_SIZE * ATLAS_SIZE)
-    font.atlas[0]   = 255  // white pixel for solid-color rects
-
-    info: stbtt.fontinfo
-    if !stbtt.InitFont(&info, raw_data(ttf_data), 0) do return false
-
-    scale := stbtt.ScaleForPixelHeight(&info, size_px)
-
-    ascent, descent, line_gap: i32
-    stbtt.GetFontVMetrics(&info, &ascent, &descent, &line_gap)
-    font.ascent   = f32(ascent)   * scale
-    font.descent  = f32(descent)  * scale
-    font.line_gap = f32(line_gap) * scale
-
-    cx, cy, row_h: int
-    cx = 1 
-
-    for ch in 0 ..< MAX_GLYPHS {
-        x0, y0, x1, y1: i32
-        stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &x0, &y0, &x1, &y1)
-
-        gw := int(x1 - x0)
-        gh := int(y1 - y0)
-
-        if cx + gw >= ATLAS_SIZE {
-            cy += row_h + 1
-            cx  = 0
-            row_h = 0
-        }
-        if cy + gh >= ATLAS_SIZE do break
-
-        if gw > 0 && gh > 0 {
-            stbtt.MakeCodepointBitmap(
-                &info,
-                &font.atlas[cy * ATLAS_SIZE + cx],
-                i32(gw), i32(gh), i32(ATLAS_SIZE),
-                scale, scale, rune(ch),
-            )
-        }
-
-        ax: i32
-        stbtt.GetCodepointHMetrics(&info, rune(ch), &ax, nil)
-
-        bx, by: i32
-        stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &bx, &by, nil, nil)
-
-        inv := 1.0 / f32(ATLAS_SIZE)
-        font.glyphs[ch] = Glyph_Info{
-            uv      = {f32(cx) * inv, f32(cy) * inv, f32(cx+gw) * inv, f32(cy+gh) * inv},
-            offset  = {f32(bx), f32(by)},
-            size    = {f32(gw), f32(gh)},
-            advance = f32(ax) * scale,
-        }
-
-        cx   += gw + 1
-        row_h = max(row_h, gh)
-    }
-
-    return true
-}
-
-font_destroy :: proc(font: ^Font) {
-	delete(font.atlas)
-	font.atlas = nil
-}
-
-
 // @Todo: Convert this to transmute later in life at some point maybe :)
 hex_to_rgba :: proc(hex: u32) -> [4]u8 {
 	return {u8((hex >> 24) & 0xFF), u8((hex >> 16) & 0xFF), u8((hex >> 8) & 0xFF), u8(hex & 0xFF)}
@@ -448,11 +309,11 @@ ui_begin :: proc(ui: ^Ui_System, screen_w, screen_h: f32, mouse: Mouse_State) {
 	ui.root.style = {}
 }
 
-ui_end :: proc(ui: ^Ui_System, font: ^Font) {
+ui_end :: proc(ui: ^Ui_System) {
 	_layout_measure(ui.root)
 	_layout_place(ui.root, 0, 0)
 	_hit_test(ui, ui.root)
-	_draw_widget(ui, ui.root, font)
+	// _draw_widget(ui, ui.root, font)
 	flush(&ui.frame, &ui.render_list)
 
 	if !ui.mouse.left_held do ui.active = 0
@@ -536,9 +397,6 @@ ui_button :: proc(
 	wgt.style = style
 	wgt.text = text
 	_attach(parent, wgt)
-	// result is read after ui_end has run hit-testing; for a single-frame
-	// response return wgt.pressed *next* frame. To get same-frame response
-	// the caller can read wgt directly after ui_end.
 	return wgt.pressed
 }
 
@@ -581,7 +439,7 @@ _layout_measure :: proc(w: ^Widget) {
 		}
 		// add text size for leaves
 		if w.text != "" && w.style.font != nil {
-			tw := measure_text(w.style.font, w.text)
+			tw := font_measure(w.style.font, w.text)
 			th := line_height(w.style.font)
 			content_w = max(content_w, tw)
 			content_h = max(content_h, th)
@@ -667,7 +525,7 @@ _hit_test :: proc(ui: ^Ui_System, w: ^Widget) {
 }
 
 @(private)
-_draw_widget :: proc(ui: ^Ui_System, w: ^Widget, font: ^Font) {
+_draw_widget :: proc(ui: ^Ui_System, w: ^Widget, font: ^FontDef) {
 	s := w.style
 	r := w.rect
 	x, y, wd, ht := r.x, r.y, r.z, r.w
@@ -691,11 +549,10 @@ _draw_widget :: proc(ui: ^Ui_System, w: ^Widget, font: ^Font) {
 	if w.text != "" && f != nil {
 		col := s.text_color if s.text_color.a > 0 else COLOR_WHITE
 		pad := w.padding
-		tw := measure_text(f, w.text)
+		tw := font_measure(f, w.text)
 		th := line_height(f)
 		tx := x + pad + (wd - pad * 2 - tw) * 0.5 // centered
 		ty := y + pad + (ht - pad * 2 - th) * 0.5
-		draw_text(&ui.frame, f, w.text, tx, ty, col)
 	}
 
 	for child in w.children {

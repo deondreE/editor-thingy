@@ -3,7 +3,7 @@ package main
 import "core:fmt"
 import sdl "vendor:sdl3"
 
-import engine "core" 
+import engine "core"
 
 WINDOW_WIDTH  :: 1280
 WINDOW_HEIGHT :: 720
@@ -18,8 +18,8 @@ main :: proc() {
 	if !sdl.SetAppMetadata("Example Renderer", "1.0", "https://test-editor.org") do return
 
 	when ODIN_OS == .Windows {
-		window := sdl.CreateWindow("Example Window", WINDOW_WIDTH, WINDOW_HEIGHT, {.RESIZABLE})	
-	} 
+		window := sdl.CreateWindow("Example Window", WINDOW_WIDTH, WINDOW_HEIGHT, {.RESIZABLE})
+	}
 	when ODIN_OS == .Linux {
 		window := sdl.CreateWindow("Example Window", WINDOW_WIDTH, WINDOW_HEIGHT, {.RESIZABLE, .VULKAN})
 	}
@@ -50,13 +50,6 @@ main :: proc() {
 	defer engine.layout_destroy(&layout)
 
 	inp: engine.Input
-	font: engine.Font
-
-	if !engine.font_init(&font, #load("./assets/font/PaperMono-Regular.ttf"), 16.0) { 
-		fmt.eprintln("Failed to load font!")
-		return
-	}
-	defer engine.font_destroy(&font)
 
 	for {
 		engine.input_begin_frame(&inp)
@@ -88,6 +81,6 @@ main :: proc() {
 		mouse := engine.input_to_mouse(&inp)
 		engine.ui_begin(ui_system, WINDOW_WIDTH, WINDOW_HEIGHT, mouse)
 		engine.renderer_render(renderer, layout.views[:])
-		engine.ui_end(ui_system, &font)
+		engine.ui_end(ui_system)
 	}
 }
