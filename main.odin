@@ -17,7 +17,12 @@ main :: proc() {
 
 	if !sdl.SetAppMetadata("Example Renderer", "1.0", "https://test-editor.org") do return
 
-	window := sdl.CreateWindow("Example Window", WINDOW_WIDTH, WINDOW_HEIGHT, {.RESIZABLE, .VULKAN})
+	when ODIN_OS == .Windows {
+		window := sdl.CreateWindow("Example Window", WINDOW_WIDTH, WINDOW_HEIGHT, {.RESIZABLE})	
+	} 
+	when ODIN_OS == .Linux {
+		window := sdl.CreateWindow("Example Window", WINDOW_WIDTH, WINDOW_HEIGHT, {.RESIZABLE, .VULKAN})
+	}
 	if window == nil {
 		fmt.eprintln("Failed to create window:", sdl.GetError())
 		return

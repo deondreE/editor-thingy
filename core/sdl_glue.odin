@@ -14,6 +14,8 @@ get_driver_names :: proc() -> (drivers: []cstring, count: i32) {
 	return
 }
 
+// @Todo: GetPointerProperties for returining HWND, And MetalWindow, and Linux Window for wayland.
+
 /// Return first driver found in priority list or empty cstring.
 set_driver_by_priority :: proc (priority_list: []cstring) -> (driver: cstring) {
 	driver_list, _ := get_driver_names()

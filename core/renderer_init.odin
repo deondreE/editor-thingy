@@ -57,7 +57,7 @@ renderer_init :: proc(
 		when ODIN_OS == .Windows {
 			ctx := new(DxContext)
 
-			if !dx_init(ctx, f32(w), f32(h)) {
+			if !dx_init(ctx, window, f32(w), f32(h)) {
 				fmt.eprintln("renderer_init: dx_init failed")
 				free(ctx)
 				free(r)
