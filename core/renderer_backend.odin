@@ -688,8 +688,36 @@ _create_framebuffers :: proc(ctx: ^Vulkan_Context) -> bool {
 	return true
 }
 
+// @Todo: Descriptor set never bound problem.
 @(private)
 _render_editor :: proc(cb: vk.CommandBuffer, ctx: ^Vulkan_Context) {
+	ui := ctx.ui_system
+	tab_active_style := Style{
+        bg_color   = hex_to_rgba(0x2d3347ff),
+        text_color = hex_to_rgba(0xe8eaf6ff),
+        font       = ui.root.style.font,
+        padding    = 8,
+    }
+
+    panel_style := Style{
+        bg_color     = hex_to_rgba(0x222636ff),
+        border_color = hex_to_rgba(0x3a3f55ff),
+    }
+
+    statusbar_style := Style{
+        bg_color   = hex_to_rgba(0x5c6bc0ff),
+        text_color = hex_to_rgba(0xffffffff),
+        font       = ui.root.style.font,
+        padding    = 6,
+    }
+
+    root := ui_column(ui, ui.root, fixed(100), fixed(100), gap = 0)
+
+	// ui_panel(ui, nil, fit(), fill(), tab_active_style, .Row,)
+	tab_bar := ui_row(ui, root, fill(), fixed(25), gap = 1, style = panel_style)
+	status := ui_row(ui, root, fill(), fixed(22), gap = 8, padding = 0, style = statusbar_style)
+	ui_label(ui, status, "NORMAL", statusbar_style)
+
 	ui_render_list(ctx, cb, &ctx.ui_system.render_list) 
 
 	color := Push_Constants {

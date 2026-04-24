@@ -319,73 +319,69 @@ frame_reset :: proc(f: ^Frame) {
 // Font
 //
 
-// @Todo redo with freetype.
 // call once with ttf file bytes -- returns a Font ready for upload
 font_init :: proc(font: ^Font, ttf_data: []u8, size_px: f32) -> bool {
-	font.size_px = size_px
-	font.atlas_size = ATLAS_SIZE
-	font.atlas = make([]u8, ATLAS_SIZE * ATLAS_SIZE)
+    font.size_px    = size_px
+    font.atlas_size = ATLAS_SIZE
+    font.atlas      = make([]u8, ATLAS_SIZE * ATLAS_SIZE)
+    font.atlas[0]   = 255  // white pixel for solid-color rects
 
-	font.atlas[0] = 255
+    info: stbtt.fontinfo
+    if !stbtt.InitFont(&info, raw_data(ttf_data), 0) do return false
 
-	info: stbtt.fontinfo
-	if !stbtt.InitFont(&info, raw_data(ttf_data), 0) do return false
+    scale := stbtt.ScaleForPixelHeight(&info, size_px)
 
-	scale := stbtt.ScaleForPixelHeight(&info, size_px)
+    ascent, descent, line_gap: i32
+    stbtt.GetFontVMetrics(&info, &ascent, &descent, &line_gap)
+    font.ascent   = f32(ascent)   * scale
+    font.descent  = f32(descent)  * scale
+    font.line_gap = f32(line_gap) * scale
 
-	ascent, descent, line_gap: i32
-	stbtt.GetFontVMetrics(&info, &ascent, &descent, &line_gap)
-	font.ascent = f32(ascent) * scale
-	font.descent = f32(descent) * scale
-	font.line_gap = f32(line_gap) * scale
+    cx, cy, row_h: int
+    cx = 1 
 
-	// simple row packer
-	cx, cy, row_h: int
+    for ch in 0 ..< MAX_GLYPHS {
+        x0, y0, x1, y1: i32
+        stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &x0, &y0, &x1, &y1)
 
-	for ch in 0 ..< MAX_GLYPHS {
-		x0, y0, x1, y1: i32
-		stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &x0, &y0, &x1, &y1)
+        gw := int(x1 - x0)
+        gh := int(y1 - y0)
 
-		gw := int(x1 - x0)
-		gh := int(y1 - y0)
+        if cx + gw >= ATLAS_SIZE {
+            cy += row_h + 1
+            cx  = 0
+            row_h = 0
+        }
+        if cy + gh >= ATLAS_SIZE do break
 
-		if cx + gw >= ATLAS_SIZE {
-			cy += row_h + 1
-			cx = 0
-			row_h = 0
-		}
-		if cy + gh >= ATLAS_SIZE do break
+        if gw > 0 && gh > 0 {
+            stbtt.MakeCodepointBitmap(
+                &info,
+                &font.atlas[cy * ATLAS_SIZE + cx],
+                i32(gw), i32(gh), i32(ATLAS_SIZE),
+                scale, scale, rune(ch),
+            )
+        }
 
-		stbtt.MakeCodepointBitmap(
-			&info,
-			&font.atlas[cy * ATLAS_SIZE + cx],
-			i32(gw),
-			i32(gh),
-			i32(ATLAS_SIZE),
-			scale,
-			scale,
-			rune(ch),
-		)
+        ax: i32
+        stbtt.GetCodepointHMetrics(&info, rune(ch), &ax, nil)
 
-		ax: i32
-		stbtt.GetCodepointHMetrics(&info, rune(ch), &ax, nil)
+        bx, by: i32
+        stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &bx, &by, nil, nil)
 
-		bx, by: i32
-		stbtt.GetCodepointBitmapBox(&info, rune(ch), scale, scale, &bx, &by, nil, nil)
+        inv := 1.0 / f32(ATLAS_SIZE)
+        font.glyphs[ch] = Glyph_Info{
+            uv      = {f32(cx) * inv, f32(cy) * inv, f32(cx+gw) * inv, f32(cy+gh) * inv},
+            offset  = {f32(bx), f32(by)},
+            size    = {f32(gw), f32(gh)},
+            advance = f32(ax) * scale,
+        }
 
-		inv := 1.0 / f32(ATLAS_SIZE)
-		font.glyphs[ch] = Glyph_Info {
-			uv      = {f32(cx) * inv, f32(cy) * inv, f32(cx + gw) * inv, f32(cy + gh) * inv},
-			offset  = {f32(bx), f32(by)},
-			size    = {f32(gw), f32(gh)},
-			advance = f32(ax) * scale,
-		}
+        cx   += gw + 1
+        row_h = max(row_h, gh)
+    }
 
-		cx += gw + 1
-		row_h = max(row_h, gh)
-	}
-
-	return true
+    return true
 }
 
 font_destroy :: proc(font: ^Font) {
@@ -452,11 +448,11 @@ ui_begin :: proc(ui: ^Ui_System, screen_w, screen_h: f32, mouse: Mouse_State) {
 	ui.root.style = {}
 }
 
-ui_end :: proc(ui: ^Ui_System) {
+ui_end :: proc(ui: ^Ui_System, font: ^Font) {
 	_layout_measure(ui.root)
 	_layout_place(ui.root, 0, 0)
 	_hit_test(ui, ui.root)
-	// _draw_widget(ui, ui.root, font)
+	_draw_widget(ui, ui.root, font)
 	flush(&ui.frame, &ui.render_list)
 
 	if !ui.mouse.left_held do ui.active = 0
